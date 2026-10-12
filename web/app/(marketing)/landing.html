@@ -1,0 +1,85 @@
+<nav class="nav" id="nav">
+  <div class="wrap">
+    <a class="brand" href="#top"><span class="mark"></span>ART</a>
+    <div class="links"><a href="#modes">Modes</a><a href="#how">How it works</a><a href="#permissions">Permissions</a></div>
+    <a class="btn btn-gold" href="/app">Launch ART</a>
+  </div>
+</nav>
+<div class="env" aria-hidden="true"><i class="o o1"></i><i class="o o2"></i></div>
+<canvas id="amb" aria-hidden="true"></canvas>
+<canvas id="ring" aria-hidden="true"></canvas>
+<header class="hero" id="top">
+  <canvas id="net" aria-hidden="true"></canvas>
+  <canvas id="fx" aria-hidden="true"></canvas>
+  <div class="wrap hero-grid">
+    <div class="copy">
+      <span class="pill c-pill"><span class="dot"></span>African Robot Trader · Solana</span>
+      <h1 class="c-h1"><span class="l1">Robot trading,</span><span class="l2">built for Africa.</span></h1>
+      <p class="sub c-sub">ART trades Solana tokens for you around the clock from your own vault wallet, inside loss limits you sign, and it can only ever send funds back to the wallet you connect.</p>
+      <div class="cta c-cta"><a class="btn btn-gold" href="/app">Connect wallet</a><a class="btn btn-ghost" href="#how">How it works</a></div>
+      <ul class="trust c-trust"><li>Paper mode first</li><li>Daily loss cap</li><li>Withdraw any time</li></ul>
+    </div>
+    <div class="right">
+      <div class="stage" id="stage"></div>
+      <div class="hud" aria-live="polite">
+        <div class="hud-top"><span id="hIdx">01 / 04</span><span id="hPct">0%</span></div>
+        <div class="hud-body" id="hBody"><h3 id="hTitle">Meet your trading robot</h3><p id="hDesc"></p></div>
+        <div class="loader" id="loader">
+          <div class="seg on"><b><i></i></b><span>Profit</span></div>
+          <div class="seg"><b><i></i></b><span>24/7</span></div>
+          <div class="seg"><b><i></i></b><span>World</span></div>
+          <div class="seg"><b><i></i></b><span>Founders</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<section class="sec" id="modes">
+  <div class="wrap">
+    <span class="eyebrow">The robot</span>
+    <h2>Three modes, one set of <em>hard guardrails.</em></h2>
+    <p class="lead">ART scans Solana tokens that are at least 10 days old, trending up, with deep liquidity and no mint or freeze authority. You choose how hard it trades, and the limits you sign can never be exceeded.</p>
+    <div class="robots" id="robotCards"><article class="rcard"><span class="rtag">Careful</span><h3>Easy</h3><p>Small trades and quick exits. It only buys when a chart is already rising and liquidity is deep.</p><div class="kv"><div>Trade size<b>$2</b></div><div>Take profit<b>+30%</b></div><div>Stop loss<b>−20%</b></div><div>Max hold<b>2 min</b></div><div>Scans every<b>5 min</b></div><div>Max trades / day<b>7</b></div></div><div class="kv" style="margin-top:10px"><div>Risk<span class="risk"><i class="on"></i><i class="on"></i><i></i><i></i><i></i></span></div></div></article><article class="rcard"><span class="rtag">Balanced</span><h3>Medium</h3><p>A middle path: larger positions, wider targets, a little more patience before it exits.</p><div class="kv"><div>Trade size<b>$5</b></div><div>Take profit<b>+60%</b></div><div>Stop loss<b>−30%</b></div><div>Max hold<b>5 min</b></div><div>Scans every<b>10 min</b></div><div>Max trades / day<b>15</b></div></div><div class="kv" style="margin-top:10px"><div>Risk<span class="risk"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></span></div></div></article><article class="rcard"><span class="rtag">Aggressive</span><h3>Hard</h3><p>Biggest size, biggest swings. Fewer scans, stricter liquidity, and a deeper stop. For people who accept large drawdowns.</p><div class="kv"><div>Trade size<b>$7</b></div><div>Take profit<b>+100%</b></div><div>Stop loss<b>−45%</b></div><div>Max hold<b>8 min</b></div><div>Scans every<b>30 min</b></div><div>Max trades / day<b>20</b></div></div><div class="kv" style="margin-top:10px"><div>Risk<span class="risk"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i></span></div></div></article></div>
+  </div>
+</section>
+
+<section class="sec" id="how" style="padding-top:0">
+  <div class="wrap">
+    <span class="eyebrow">How it works</span>
+    <h2>From wallet to first trade in <em>three steps.</em></h2>
+    <div class="steps">
+      <div class="step"><div class="n">i</div><h3>Connect any Solana wallet</h3><p>Phantom, Solflare, Backpack, Coinbase, Trust, Ledger and more, in your browser or on your phone. One sign-in message proves the wallet is yours. It moves nothing.</p></div>
+      <div class="step"><div class="n">ii</div><h3>Sign your limits</h3><p>Pick Easy, Medium or Hard, then set the most per trade, a daily loss stop and how many trades may be open. You sign those exact words, and the robot cannot go beyond them.</p></div>
+      <div class="step"><div class="n">iii</div><h3>Fund, watch, withdraw</h3><p>Send SOL to your ART vault, watch the robot in paper mode first, then go live when you are ready. Take your funds back to your wallet whenever you want.</p></div>
+    </div>
+    <div class="guards">
+      <div class="guard"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.5-3.2 8-8 9-4.8-1-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/></svg><div><b>Withdraw only to you</b><span>The vault can send funds to the wallet that signed in, and nowhere else.</span></div></div>
+      <div class="guard"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><div><b>Daily loss cap</b><span>The robot stops for the day once your limit is reached.</span></div></div>
+      <div class="guard"><svg viewBox="0 0 24 24"><path d="M12 3v9"/><path d="M6.3 6.3a8 8 0 1011.4 0"/></svg><div><b>Kill switch</b><span>One tap pauses the robot and closes every open trade.</span></div></div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="permissions" style="padding-top:0">
+  <div class="wrap">
+    <span class="eyebrow">Permissions</span>
+    <h2>What you sign, and <em>what it can do.</em></h2>
+    <p class="lead">Connecting a wallet never gives anyone the power to spend from it. Only signatures do, and ART asks for exactly these.</p>
+    <div class="perms">
+      <div class="prow"><i>i</i><b>Connect</b><span>Shares your public address. <em>Cannot move funds</em></span></div>
+      <div class="prow"><i>ii</i><b>Sign in</b><span>A message that proves you own the wallet. <em>Moves nothing, grants nothing</em></span></div>
+      <div class="prow"><i>iii</i><b>Sign your limits</b><span>A message that sets the most the robot may risk. It lets ART trade from your vault only. <em>Never from your own wallet</em></span></div>
+      <div class="prow"><i>iv</i><b>Fund the vault</b><span>A normal transfer you approve in your wallet. <em>The only time your wallet sends SOL</em></span></div>
+      <div class="prow"><i>v</i><b>Withdraw</b><span>A message you sign. The vault pays your connected wallet and no other address. <em>Always back to you</em></span></div>
+    </div>
+    <div class="callout"><b>Be clear about custody.</b> The vault is a wallet ART&apos;s trading service controls so it can trade while you are away. It is not a bank account and is not insured. Only fund what you can afford to lose.</div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="brand"><span class="mark"></span>ART · African Robot Trader</div>
+    <p>Trading digital assets carries a high risk of loss and is not suitable for everyone. ART does not promise profit, and past results do not guarantee future results. Check that using a trading service like this is allowed where you live.</p>
+  </div>
+</footer>

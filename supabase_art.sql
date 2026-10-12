@@ -1,0 +1,117 @@
+-- ART (African Robot Trader) schema. Run once in the Supabase SQL editor.
+-- All tables are locked: RLS on, no policies, anon/authenticated roles revoked.
+-- Only the server side (Next.js API routes + the worker) talks to them, with the service-role key.
+
+create extension if not exists pgcrypto;
+
+create table if not exists public.art_users (
+  id          uuid primary key default gen_random_uuid(),
+  wallet      text not null unique,          -- the wallet the user connected (base58 pubkey)
+  tg_chat_id  bigint unique,                 -- set by /link CODE in Telegram
+  tg_username text,
+  created_at  timestamptz not null default now()
+);
+
+-- One trading vault per user. The secret key is SEALED to the worker's public key:
+-- the web app can create it but can never read it back (only the worker holds the opening key).
+create table if not exists public.art_vaults (
+  user_id    uuid primary key references public.art_users(id) on delete cascade,
+  address    text not null unique,
+  sealed     jsonb not null,                 -- { v, epk, n, ct } see lib/seal.js
+  created_at timestamptz not null default now()
+);
+
+-- Signed consent. Every row is a message the user signed with their own wallet.
+create table if not exists public.art_consents (
+  id         bigserial primary key,
+  user_id    uuid not null references public.art_users(id) on delete cascade,
+  version    text not null,
+  message    text not null,
+  signature  text not null,                  -- base64
+  sig_kind   text not null default 'message',-- 'message' | 'tx' (Ledger fallback)
+  limits     jsonb not null,                 -- { maxPositionSol, maxDailyLossPct, maxConcurrent, mode }
+  created_at timestamptz not null default now(),
+  revoked_at timestamptz
+);
+create index if not exists art_consents_user_idx on public.art_consents (user_id, created_at desc);
+create unique index if not exists art_consents_msg_uq on public.art_consents (user_id, message);  -- a signed message can be stored once (replay guard)
+
+create table if not exists public.art_settings (
+  user_id            uuid primary key references public.art_users(id) on delete cascade,
+  mode               text not null default 'medium' check (mode in ('easy','medium','hard')),
+  paused             boolean not null default true,    -- starts paused; the user presses Start
+  live               boolean not null default false,   -- false = paper trading
+  max_position_sol   double precision not null default 0.05,
+  max_daily_loss_pct double precision not null default 20,
+  max_concurrent     integer not null default 1,
+  size_usd           double precision,                 -- trade size in USD; null = the mode's minimum ($5 easy, $10 medium, $20 hard)
+  panic_at           timestamptz,                      -- "Stop and sell all" request
+  updated_at         timestamptz not null default now()
+);
+
+-- Upgrading an existing database: alter table public.art_settings add column if not exists size_usd double precision;
+
+-- Per-user bot state (open positions, daily counters, recent history), same shape the old single-user bot used.
+create table if not exists public.art_state (
+  user_id    uuid not null references public.art_users(id) on delete cascade,
+  key        text not null,                            -- 'paper:positions' | 'live:positions' | 'live:daily' ...
+  value      jsonb not null,
+  updated_at timestamptz not null default now(),
+  primary key (user_id, key)
+);
+
+create table if not exists public.art_trades (
+  id            bigserial primary key,
+  user_id       uuid not null references public.art_users(id) on delete cascade,
+  created_at    timestamptz not null default now(),
+  paper         boolean not null,
+  mode          text,
+  mint          text not null,
+  entry_reason  text,
+  exit_reason   text,
+  cost_sol      double precision,
+  proceeds_sol  double precision,
+  realized_sol  double precision,
+  pct           double precision,
+  hold_sec      integer,
+  buy_sig       text,
+  sell_sig      text,
+  features      jsonb
+);
+create index if not exists art_trades_user_idx on public.art_trades (user_id, created_at desc);
+
+-- Withdrawals: the user signs "send X SOL to MY connected wallet". The web API stores the request,
+-- the worker re-verifies the signature and is the only thing that can move the vault funds.
+create table if not exists public.art_withdrawals (
+  id             uuid primary key default gen_random_uuid(),
+  user_id        uuid not null references public.art_users(id) on delete cascade,
+  to_address     text not null,
+  amount_lamports bigint,                              -- null = everything
+  message        text not null,
+  signature      text not null,
+  sig_kind       text not null default 'message',
+  status         text not null default 'pending' check (status in ('pending','processing','done','failed','rejected')),
+  tx_sig         text,
+  error          text,
+  created_at     timestamptz not null default now(),
+  processed_at   timestamptz
+);
+create index if not exists art_withdrawals_status_idx on public.art_withdrawals (status, created_at);
+create unique index if not exists art_withdrawals_msg_uq on public.art_withdrawals (message);  -- replay guard: the nonce is inside the message
+
+create table if not exists public.art_link_codes (
+  code       text primary key,
+  user_id    uuid not null references public.art_users(id) on delete cascade,
+  expires_at timestamptz not null
+);
+
+do $$
+declare t text;
+begin
+  foreach t in array array['art_users','art_vaults','art_consents','art_settings','art_state','art_trades','art_withdrawals','art_link_codes']
+  loop
+    execute format('alter table public.%I enable row level security', t);
+    execute format('revoke all on public.%I from anon, authenticated', t);
+  end loop;
+end $$;
+revoke all on sequence public.art_consents_id_seq, public.art_trades_id_seq from anon, authenticated;

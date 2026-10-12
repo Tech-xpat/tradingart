@@ -1,0 +1,22 @@
+{
+  "name": "art-worker",
+  "version": "4.0.0",
+  "description": "ART (African Robot Trader) worker: multi-user Solana trading robot. Each user trades from their own sealed vault wallet, paper mode by default.",
+  "main": "index.js",
+  "private": true,
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --test",
+    "gen-seal-key": "node scripts/gen-seal-key.js"
+  },
+  "engines": { "node": ">=18.18" },
+  "license": "MIT",
+  "dependencies": {
+    "@solana/web3.js": "^1.98.0",
+    "@supabase/supabase-js": "^2.45.0",
+    "bs58": "^6.0.0",
+    "dotenv": "^16.4.5",
+    "node-telegram-bot-api": "^0.66.0",
+    "tweetnacl": "^1.0.3"
+  }
+}

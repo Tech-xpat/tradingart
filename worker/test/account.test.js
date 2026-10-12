@@ -1,0 +1,107 @@
+const test = require('node:test');
+const assert = require('node:assert');
+process.env.LIVE_TRADING_ENABLED = 'false';
+const config = require('../src/config');
+const { Account } = require('../src/trading/account');
+const { effectivePlan } = require('../src/plans');
+
+const MINT = 'MintMintMintMintMintMintMintMintMintMint1';
+function fakeDeps({ price = { v: 0.001 } } = {}) {
+  const state = new Map(); const trades = [];
+  return {
+    trades, state,
+    db: {
+      async getState(u, k) { return state.get(u + k) || null; },
+      async setState(u, k, v) { state.set(u + k, JSON.parse(JSON.stringify(v))); },
+      async insertTrade(r) { trades.push(r); },
+    },
+    market: { async getTokenMarket() { return { priceNative: price.v, liquidityUsd: 50000, ageDays: 30, volume1h: 9000, priceChange1h: 5, priceChange6h: 6, buys1h: 40 }; } },
+    chain: { async getMintInfo() { return { mintAuthority: null, freezeAuthority: null, decimals: 6 }; }, async getSolLamports() { return 0n; }, async getSolBalance() { return 0; }, async getTokenBalance() { return { raw: 0n } } },
+    swap: { async buy() { throw new Error('LIVE BUY MUST NOT HAPPEN IN PAPER'); }, async sellAll() { throw new Error('LIVE SELL MUST NOT HAPPEN IN PAPER'); } },
+    fills: {},
+    scanner: { async fetchSolPriceUsd() { return 200; } },
+    price,
+  };
+}
+const settings = (o = {}) => ({ mode: 'medium', paused: false, live: false, max_position_sol: 0.05, max_daily_loss_pct: 20, max_concurrent: 1, panic_at: null, ...o });
+const mk = (deps, o = {}) => new Account({ userId: 'u1', wallet: 'WALLETWALLETWALLETWALLETWALLETWALLETWALLETW1', vaultAddress: o.vault || null, settings: o.settings || settings(), consent: o.consent ?? null, deps, unseal: () => { throw new Error('no key'); }, notify: o.notify || (() => {}) });
+
+test('a user can only tighten limits, never loosen them past consent or platform caps', () => {
+  const p = effectivePlan(settings({ mode: 'hard', max_position_sol: 5, max_daily_loss_pct: 90, max_concurrent: 9 }), { maxPositionSol: 0.1, maxDailyLossPct: 15, maxConcurrent: 2 });
+  assert.strictEqual(p.maxPositionSol, 0.1); assert.strictEqual(p.maxDailyLossPct, 15); assert.strictEqual(p.maxConcurrent, 2);
+  const q = effectivePlan(settings({ mode: 'hard', max_position_sol: 5, max_daily_loss_pct: 90, max_concurrent: 9 }), null);
+  assert.ok(q.maxPositionSol <= config.CAP_MAX_POSITION_SOL && q.maxDailyLossPct <= config.CAP_MAX_DAILY_LOSS_PCT && q.maxConcurrent <= config.CAP_MAX_CONCURRENT);
+});
+
+test('live is impossible while the platform switch is off, even if the user chose live and has a vault + consent', () => {
+  const a = mk(fakeDeps(), { settings: settings({ live: true }), vault: 'VAULT', consent: { maxPositionSol: 0.05, maxDailyLossPct: 20, maxConcurrent: 1 } });
+  assert.strictEqual(a.liveAllowed, false); assert.strictEqual(a.entryBook().paper, true);
+});
+
+test('live needs consent: with the switch on but no consent it stays paper', () => {
+  config.LIVE_TRADING_ENABLED = true;
+  try {
+    const noConsent = mk(fakeDeps(), { settings: settings({ live: true }), vault: 'VAULT', consent: null });
+    assert.strictEqual(noConsent.liveAllowed, false);
+    const noVault = mk(fakeDeps(), { settings: settings({ live: true }), vault: null, consent: { maxPositionSol: 0.05 } });
+    assert.strictEqual(noVault.liveAllowed, false);
+    const ok = mk(fakeDeps(), { settings: settings({ live: true }), vault: 'VAULT', consent: { maxPositionSol: 0.05, maxDailyLossPct: 20, maxConcurrent: 1 } });
+    assert.strictEqual(ok.liveAllowed, true);
+  } finally { config.LIVE_TRADING_ENABLED = false; }
+});
+
+test('paper trade: enter, take profit, close, record a trade, balance moves', async () => {
+  const d = fakeDeps(); const msgs = []; const a = mk(d, { notify: (t) => msgs.push(t) });
+  const r = await a.offer(MINT, 'scanner:50');
+  assert.ok(r.ok, r.why); assert.strictEqual(a.openCount(), 1);
+  assert.ok(r.pos.sizeSol > 0 && r.pos.sizeSol <= 0.05 + 1e-9, 'respects the per-trade cap');
+  const bal0 = a.books.paper.daily.paperBalanceSol;
+  d.price.v = 0.001 * 2; // +100% > TP 60% for medium
+  await a.monitorTick(); await new Promise((r) => setTimeout(r, 30));
+  assert.strictEqual(a.openCount(), 0);
+  assert.strictEqual(d.trades.length, 1); assert.strictEqual(d.trades[0].paper, true); assert.strictEqual(d.trades[0].exit_reason, 'take_profit');
+  assert.ok(a.books.paper.daily.paperBalanceSol > bal0);
+  assert.ok(msgs.some((m) => m.includes('EXIT') && m.includes('PAPER')));
+});
+
+test('stop loss exits; the daily loss limit then blocks new entries', async () => {
+  const d = fakeDeps(); const a = mk(d, { settings: settings({ max_daily_loss_pct: 1, max_position_sol: 0.12 }) });
+  assert.ok((await a.offer(MINT, 'scanner:50')).ok);
+  d.price.v = 0.001 * 0.5; await a.monitorTick(); await new Promise((r) => setTimeout(r, 30));
+  assert.strictEqual(d.trades[0].exit_reason, 'stop_loss'); assert.ok(d.trades[0].realized_sol < 0);
+  const again = await a.offer('Other1111111111111111111111111111111111111', 'scanner:50');
+  assert.ok(!again.ok); assert.match(again.why, /daily loss/);
+});
+
+test('paused accounts never enter, but open trades still exit', async () => {
+  const d = fakeDeps(); const a = mk(d);
+  assert.ok((await a.offer(MINT, 'scanner:50')).ok);
+  a.update(settings({ paused: true }), null);
+  assert.ok(!(await a.offer('Other1111111111111111111111111111111111111', 'x')).ok);
+  d.price.v = 0.01; await a.monitorTick(); await new Promise((r) => setTimeout(r, 30));
+  assert.strictEqual(a.openCount(), 0);
+});
+
+test('max concurrent is enforced and panic closes everything once per request', async () => {
+  const d = fakeDeps(); const a = mk(d, { settings: settings({ max_concurrent: 1 }) });
+  assert.ok((await a.offer(MINT, 'scanner:50')).ok);
+  assert.strictEqual((await a.offer('Other1111111111111111111111111111111111111', 'x')).why, 'max concurrent');
+  const t = Date.now() + 1000;
+  assert.strictEqual(a.handlePanic(t), 1); await new Promise((r) => setTimeout(r, 30));
+  assert.strictEqual(a.openCount(), 0);
+  assert.strictEqual(a.handlePanic(t), 0, 'same request is not replayed');
+});
+
+test('positions survive a restart (state saved, reloaded by a new Account)', async () => {
+  const d = fakeDeps(); const a = mk(d);
+  assert.ok((await a.offer(MINT, 'scanner:50')).ok); await new Promise((r) => setTimeout(r, 30));
+  const b = mk(d); await b.load();
+  assert.strictEqual(b.openCount(), 1);
+});
+
+test('two users never share positions or balances', async () => {
+  const d = fakeDeps(); const a = mk(d); const b = new Account({ userId: 'u2', wallet: 'W2W2W2W2W2W2W2W2W2W2W2W2W2W2W2W2W2W2W2', settings: settings(), consent: null, deps: d, unseal: () => {}, notify: () => {} });
+  assert.ok((await a.offer(MINT, 'scanner:50')).ok);
+  await b.load(); assert.strictEqual(b.openCount(), 0);
+  assert.strictEqual(b.books.paper.daily.paperBalanceSol, config.PAPER_BALANCE_SOL);
+});
