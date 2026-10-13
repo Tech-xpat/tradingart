@@ -9,7 +9,7 @@ export const env = {
   get supabaseKey() { return need('SUPABASE_SERVICE_KEY'); },
   get sessionSecret() { const s = need('SESSION_SECRET'); if (s.length < 32) throw new Error('SESSION_SECRET must be at least 32 characters'); return s; },
   get sealPublic() { return need('VAULT_SEAL_PUBLIC'); },
-  get domain() { return process.env.NEXT_PUBLIC_APP_DOMAIN || 'localhost:3000'; },
+  get domain() { return String(process.env.NEXT_PUBLIC_APP_DOMAIN || 'localhost:3000').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, ''); },
   get rpcUrl() { return process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com'; },
   get liveEnabled() { return process.env.LIVE_ENABLED === 'true'; },
   get isProd() { return process.env.NODE_ENV === 'production'; },

@@ -1,6 +1,5 @@
 import { NextRequest } from 'next/server';
-import { env } from '@/lib/env';
-import { json, fail, rateLimited, ipOf } from '@/lib/api';
+import { json, fail, rateLimited, ipOf, siteDomain } from '@/lib/api';
 import { makeNonce } from '@/lib/nonce';
 import { isAddress } from '@/lib/proof';
 import { signInMessage } from '@/lib/messages';
@@ -15,5 +14,5 @@ export async function GET(req: NextRequest) {
   if (!isAddress(wallet)) return fail('bad wallet');
   const { nonce, expiresAt } = makeNonce('signin', wallet, 5 * 60 * 1000);
   const issuedAt = new Date().toISOString();
-  return json({ message: signInMessage({ domain: env.domain, wallet, nonce, issuedAt, expiresAt }) });
+  return json({ message: signInMessage({ domain: siteDomain(req), wallet, nonce, issuedAt, expiresAt }) });
 }

@@ -16,11 +16,25 @@ export function rateLimited(key: string, max: number, windowMs: number): boolean
 }
 export const ipOf = (req: NextRequest) => (req.headers.get('x-forwarded-for') || '').split(',')[0].trim() || 'ip';
 
-/** CSRF: state-changing requests must come from our own origin. */
+/** The host the browser actually used to reach us (behind Vercel/Railway proxies too). */
+export function hostOf(req: NextRequest): string {
+  const h = req.headers.get('x-forwarded-host') || req.headers.get('host') || req.nextUrl.host || '';
+  return h.split(',')[0].trim().toLowerCase();
+}
+
+/** Domain used in the sign-in text: the host the user is really on. */
+export function siteDomain(req: NextRequest): string {
+  return hostOf(req) || env.domain;
+}
+
+/** CSRF: state-changing requests must come from our own origin (the host we were reached on, or the configured domain). */
 export function sameOrigin(req: NextRequest): boolean {
   const origin = req.headers.get('origin');
   if (!origin) return !env.isProd; // browsers always send Origin on cross-site POSTs; allow tools in dev
-  try { return new URL(origin).host === env.domain; } catch { return false; }
+  try {
+    const host = new URL(origin).host.toLowerCase();
+    return host === hostOf(req) || host === env.domain;
+  } catch { return false; }
 }
 
 type Ctx = { req: NextRequest; session: Session };

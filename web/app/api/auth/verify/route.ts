@@ -1,6 +1,5 @@
 import { NextRequest } from 'next/server';
-import { env } from '@/lib/env';
-import { json, fail, rateLimited, ipOf, sameOrigin } from '@/lib/api';
+import { json, fail, rateLimited, ipOf, sameOrigin, siteDomain } from '@/lib/api';
 import { db, must } from '@/lib/db';
 import { checkNonce } from '@/lib/nonce';
 import { parseProof, proofOk, isAddress } from '@/lib/proof';
@@ -21,11 +20,11 @@ export async function POST(req: NextRequest) {
 
     const m = parseSignIn(message);
     if (m.wallet !== wallet) return fail('wallet mismatch');
-    if (m.domain !== env.domain) return fail('wrong domain');
+    if (m.domain !== siteDomain(req)) return fail('wrong domain');
     if (!checkNonce('signin', wallet, m.nonce)) return fail('sign-in expired, try again');
     if (!(Date.parse(m.expiresAt) > Date.now())) return fail('sign-in expired, try again');
     // the text must be exactly what the server would have produced: no extra lines smuggled in
-    if (message !== signInMessage({ domain: env.domain, wallet, nonce: m.nonce, issuedAt: m.issuedAt, expiresAt: m.expiresAt })) return fail('message was altered');
+    if (message !== signInMessage({ domain: siteDomain(req), wallet, nonce: m.nonce, issuedAt: m.issuedAt, expiresAt: m.expiresAt })) return fail('message was altered');
     if (!proofOk(wallet, message, proof)) return fail('signature did not verify', 401);
 
     const sb = db();
