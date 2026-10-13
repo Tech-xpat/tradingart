@@ -7,7 +7,11 @@ const market = require('../analysis/dexscreener');
 const config = require('../config');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// SCAN_RELAXED=true loosens the filters so paper mode finds trades faster while testing.
+// It is ignored whenever live trading is enabled, so real money is never traded on looser rules.
+const relaxed = () => config.SCAN_RELAXED && !config.LIVE_TRADING_ENABLED;
 const MIN_AGE_DAYS = 10;
+const minAge = () => (relaxed() ? 1 : MIN_AGE_DAYS);
 const SEEN_TTL_MS = 6 * 60 * 60 * 1000;
 const seenByMode = { easy: new Map(), medium: new Map(), hard: new Map() };
 
@@ -56,13 +60,15 @@ async function fetchCandidates() {
 function scoreChart(mkt, mode) {
   if (!mkt || !(mkt.priceNative > 0)) return -Infinity;
   const ageDays = mkt.ageDays || 0;
-  if (ageDays < MIN_AGE_DAYS) return -Infinity;
+  if (ageDays < minAge()) return -Infinity;
   const liq = mkt.liquidityUsd || 0, vol1h = mkt.volume1h || 0, vol6h = mkt.volume6h || 0;
   const ch5 = mkt.priceChange5m || 0, ch1h = mkt.priceChange1h || 0, ch6h = mkt.priceChange6h || 0, ch24h = mkt.priceChange24h || 0;
   const buys1h = mkt.buys1h || 0, sells1h = mkt.sells1h || 0;
-  if (!(ch1h > 0 || ch6h > 2)) return -Infinity;
+  if (!relaxed() && !(ch1h > 0 || ch6h > 2)) return -Infinity;
   if (ch5 < -12 || ch24h < -40) return -Infinity;
-  const b = BARS[mode] || BARS.medium;
+  const b0 = BARS[mode] || BARS.medium;
+  const k = relaxed() ? 0.4 : 1;
+  const b = { minLiq: b0.minLiq * k, minVol1h: b0.minVol1h * k, minBuys1h: Math.ceil(b0.minBuys1h * k) };
   if (liq < b.minLiq) return -Infinity;
   if (vol1h < b.minVol1h && vol6h < b.minVol1h * 3) return -Infinity;
   if (buys1h < b.minBuys1h) return -Infinity;
@@ -93,7 +99,7 @@ async function pickOne(mode) {
     await sleep(120);
   }
   scored.sort((a, b) => b.score - a.score);
-  if (!scored.length) { logger.info(`scanner[${mode}]: ${candidates.length} candidates, none passed (age>=${MIN_AGE_DAYS}d + rising)`); return null; }
+  if (!scored.length) { logger.info(`scanner[${mode}]: ${candidates.length} candidates, none passed (age>=${minAge()}d${relaxed() ? ', RELAXED test filters' : ' + rising'})`); return null; }
   const top = scored.slice(0, 5);
   const pick = top[Math.floor(Math.random() * top.length)];
   seen.set(pick.mint, Date.now());

@@ -52,6 +52,7 @@ module.exports = {
   IGNORE_MINTS: list('IGNORE_MINTS'),
 
   // paper
+  SCAN_RELAXED: bool('SCAN_RELAXED', false),
   PAPER_BALANCE_SOL: num('PAPER_BALANCE_SOL', 1),
   PAPER_FRICTION_PCT: num('PAPER_FRICTION_PCT', 2),
 
