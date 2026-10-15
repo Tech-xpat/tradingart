@@ -34,13 +34,16 @@ export async function tokenViews(mints: string[]): Promise<Record<string, TokenV
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < 4000) return hit.v;
   const out: Record<string, TokenView> = {};
-  const res = await fetch(`https://api.dexscreener.com/tokens/v1/solana/${mints.join(',')}`, { signal: AbortSignal.timeout(7000), headers: { accept: 'application/json' } });
-  if (!res.ok) throw new Error(`market data ${res.status}`);
-  const pairs = (await res.json()) as any[];
   const best: Record<string, any> = {};
-  for (const p of Array.isArray(pairs) ? pairs : []) {
-    const m = p?.baseToken?.address; if (!m || !mints.includes(m)) continue;
-    if (!best[m] || n(p.liquidity?.usd) > n(best[m].liquidity?.usd)) best[m] = p;
+  for (let i = 0; i < mints.length; i += 30) {
+    const chunk = mints.slice(i, i + 30);
+    const res = await fetch(`https://api.dexscreener.com/tokens/v1/solana/${chunk.join(',')}`, { signal: AbortSignal.timeout(7000), headers: { accept: 'application/json' } });
+    if (!res.ok) { if (i === 0) throw new Error(`market data ${res.status}`); continue; }
+    const pairs = (await res.json()) as any[];
+    for (const p of Array.isArray(pairs) ? pairs : []) {
+      const m = p?.baseToken?.address; if (!m || !chunk.includes(m)) continue;
+      if (!best[m] || n(p.liquidity?.usd) > n(best[m].liquidity?.usd)) best[m] = p;
+    }
   }
   for (const m of Object.keys(best)) out[m] = shape(best[m]);
   cache.set(key, { at: Date.now(), v: out });

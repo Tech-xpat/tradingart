@@ -7,7 +7,7 @@ import type { TokenView } from './dex';
  *  - Primary: PumpPortal websocket (new launches, migrations, per-token trades), straight from the browser.
  *  - Market data: DexScreener through our /api/tokens proxy, refreshed every few seconds for what is on screen.
  *  - Fallback: if the socket cannot connect, the New list is filled from DexScreener's latest token profiles.
- * Three lists, 10 each: New, Final stretch (bonding curve nearly full), Migrated.
+ * Three lists, 20 each, saved in the browser so they are still there after a refresh: New, Final stretch (bonding curve nearly full), Migrated.
  */
 export type Tok = {
   mint: string; name: string | null; symbol: string | null; uri: string | null; image: string | null; description: string | null;
@@ -16,10 +16,12 @@ export type Tok = {
 };
 export type FeedStatus = 'connecting' | 'live' | 'fallback';
 
-export const LIST_SIZE = 10;
+export const LIST_SIZE = 20;
+const CACHE_KEY = 'art:tokens:v2';
+const CACHE_MAX_AGE = 24 * 3600 * 1000;
 const STREAM_URL = process.env.NEXT_PUBLIC_STREAM_URL || 'wss://pumpportal.fun/api/data';
 const FINAL_STRETCH = 0.6;
-const MAX_TRACKED = 140;
+const MAX_TRACKED = 160;
 
 /** Bonding-curve progress from the virtual SOL reserve (starts ~30, graduates ~115). Approximate by nature. */
 export const curveProgress = (vSol: number) => Math.max(0, Math.min(1, (vSol - 30) / 85));
@@ -46,6 +48,16 @@ export function useLiveTokens() {
   const metaQ = useRef<string[]>([]); const metaBusy = useRef(0);
 
   const touch = () => { dirty.current = true; };
+
+  /* what was on screen last time comes back right after mount (not during server render, so hydration stays clean) */
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(CACHE_KEY) || '[]') as Tok[];
+      const cutoff = Date.now() - CACHE_MAX_AGE;
+      for (const t of Array.isArray(saved) ? saved : []) if (t && typeof t.mint === 'string' && (t.lastAt || 0) > cutoff && !store.current.has(t.mint)) store.current.set(t.mint, { ...blank(t.mint), ...t });
+      if (store.current.size) { dirty.current = true; setTick((n) => n + 1); }
+    } catch { /* no saved list yet, or storage is blocked */ }
+  }, []);
   const upsert = (mint: string, fn: (t: Tok) => void) => { let t = store.current.get(mint); if (!t) { t = blank(mint); store.current.set(mint, t); } fn(t); t.lastAt = Date.now(); touch(); return t; };
 
   const pumpMeta = useCallback(() => {
@@ -147,6 +159,24 @@ export function useLiveTokens() {
     return () => { stop = true; clearInterval(id); };
   }, [status]);
 
+  /* save the lists (newest first, trimmed) every few seconds and when the tab is hidden */
+  useEffect(() => {
+    const save = () => {
+      try {
+        const all = [...store.current.values()];
+        const keep = [
+          ...all.filter((t) => t.kind === 'new').sort((a, b) => b.createdAt - a.createdAt).slice(0, 80),
+          ...all.filter((t) => t.kind === 'migrated').sort((a, b) => (b.migratedAt || 0) - (a.migratedAt || 0)).slice(0, 40),
+        ];
+        localStorage.setItem(CACHE_KEY, JSON.stringify(keep));
+      } catch { /* storage full or blocked: the live feed still works */ }
+    };
+    const id = setInterval(save, 4000);
+    const hide = () => { if (document.visibilityState === 'hidden') save(); };
+    document.addEventListener('visibilitychange', hide); window.addEventListener('pagehide', save);
+    return () => { clearInterval(id); document.removeEventListener('visibilitychange', hide); window.removeEventListener('pagehide', save); };
+  }, []);
+
   /* repaint at most every 700 ms, however fast the socket is */
   useEffect(() => { const id = setInterval(() => { if (dirty.current) { dirty.current = false; setTick((n) => n + 1); } }, 700); return () => clearInterval(id); }, []);
 
@@ -167,7 +197,7 @@ export function useLiveTokens() {
   useEffect(() => {
     let stop = false;
     const go = async () => {
-      const mints = shownRef.current.split(',').filter(Boolean).slice(0, 30); if (!mints.length) return;
+      const mints = shownRef.current.split(',').filter(Boolean).slice(0, 60); if (!mints.length) return;
       try {
         const r = await fetch(`/api/tokens?mints=${mints.join(',')}`); const j = await r.json(); if (stop || !r.ok) return;
         if (typeof j.solUsd === 'number') setSolUsd(j.solUsd);

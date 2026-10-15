@@ -62,13 +62,19 @@ async def main():
                 ws.on_message(on_msg)
             await pg.route_web_socket("wss://pumpportal.fun/**", on_ws)
             async def tokens(route):
-                await route.fulfill(status=200, content_type="application/json", body=json.dumps({"tokens": {}, "solUsd": 150}))
+                import urllib.parse
+                ms = urllib.parse.parse_qs(urllib.parse.urlparse(route.request.url).query).get("mints", [""])[0].split(",")
+                tv = lambda m: {"mint": m, "name": "Dex Coin", "symbol": "DXC", "imageUrl": "https://dd.dexscreener.com/ds-data/tokens/solana/x.png", "priceUsd": 0.00042, "marketCapUsd": 420000, "liquidityUsd": 30000, "volume": {"m5": 1, "h1": 5000, "h6": 3, "h24": 9000}, "change": {"m5": 1, "h1": 7.5, "h6": 3, "h24": 4}, "txns1h": {"buys": 60, "sells": 30}, "pairAddress": "P" * 40, "dexId": "pumpswap", "pairCreatedAt": 1, "url": None, "websites": ["https://x.io"], "socials": []}
+                await route.fulfill(status=200, content_type="application/json", body=json.dumps({"tokens": {m: tv(m) for m in ms[:3] if m}, "solUsd": 150}))
             async def one(route):
                 url = route.request.url
                 if "mint=" + MINT in url or "mint=" in url and "bad" not in url:
                     await route.fulfill(status=200, content_type="application/json", body=json.dumps({"token": {"mint": MINT, "name": "Search Coin", "symbol": "SRC", "imageUrl": None, "priceUsd": 0.0123, "marketCapUsd": 1234567, "liquidityUsd": 54321, "volume": {"m5": 1, "h1": 2, "h6": 3, "h24": 4567}, "change": {"m5": 1.5, "h1": -2.5, "h6": 3, "h24": 4}, "txns1h": {"buys": 10, "sells": 4}, "pairAddress": "PairAddr1111111111111111111111111111111111", "dexId": "pumpswap", "pairCreatedAt": 1, "url": "https://dexscreener.com/solana/x", "websites": [], "socials": []}}))
                 else: await route.continue_()
             await pg.route("**/api/tokens?**", tokens)
+            async def img(route):
+                await route.fulfill(status=200, content_type="image/gif", body=base64.b64decode("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"))
+            await pg.route("**/api/img?**", img)
             await pg.route("**/api/token?**", one)
             await pg.goto(BASE + "/app"); await pg.wait_for_timeout(1500)
             # --- tokens tab (default, works signed out) ---
@@ -77,9 +83,24 @@ async def main():
             assert n_new >= 3, f"expected live cards, got {n_new}"
             if name == "d":
                 cols = await pg.locator(".col").count(); assert cols == 3
-                assert await pg.locator(".col:nth-child(1) .tkcard").count() <= 10, "limit is 10 per list"
+                assert await pg.locator(".col:nth-child(1) .tkcard").count() <= 20, "limit is 20 per list"
                 assert await pg.locator(".col:nth-child(2) .tkcard").count() >= 1, "final stretch fills from the stream"
                 assert await pg.locator(".col:nth-child(3) .tkcard").count() == 1, "migration shows up"
+            # each card carries figures + a risk bar together, and token images are the small proxied thumbnails
+            assert await pg.locator(".tkcard .riskbar").count() == await pg.locator(".tkcard").count(), "every card has a risk bar"
+            first = await pg.locator(".tkcard").first.inner_text(); assert "Price" in first and "MC" in first and "Vol" in first and "Liq" in first, first
+            await pg.wait_for_selector(".tkcard img", timeout=15000)
+            imgs = await pg.locator(".tkcard img").evaluate_all("els => els.map(e => e.src)")
+            assert imgs and all("/api/img?" in i for i in imgs), imgs
+            assert await pg.locator(".tkcard .risk.low, .tkcard .risk.medium").count() >= 1, "enriched tokens read as safer than unknowns"
+            # the lists survive a refresh: saved in the browser, shown again before any socket delivers anything
+            await pg.wait_for_timeout(4600)
+            pg2 = await ctx.new_page()
+            await pg2.route_web_socket("wss://pumpportal.fun/**", lambda ws: ws.close())
+            await pg2.goto(BASE + "/app")
+            await pg2.wait_for_selector(".tkcard", timeout=5000)
+            assert await pg2.locator(".tkcard").count() >= n_new, "list is back after refresh"
+            await pg2.close()
             await pg.get_by_label("Contract address").fill("not-an-address"); await pg.get_by_role("button", name="Search").click()
             await pg.wait_for_selector("text=Paste a full Solana token address")
             await pg.get_by_label("Contract address").fill(MINT); await pg.get_by_role("button", name="Search").click()

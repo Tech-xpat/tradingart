@@ -1,5 +1,6 @@
 'use client';
-import { useMemo, type ReactNode } from 'react';
+import { useCallback, useMemo, type ReactNode } from 'react';
+import type { WalletError } from '@solana/wallet-adapter-base';
 import { ConnectionProvider, WalletProvider } from '@solana/wallet-adapter-react';
 import { WalletModalProvider } from '@solana/wallet-adapter-react-ui';
 import {
@@ -41,9 +42,15 @@ export default function Providers({ children }: { children: ReactNode }) {
     }
     return list;
   }, []);
+  // surface the wallet's real error text on the page instead of failing silently
+  const onError = useCallback((e: WalletError) => {
+    const msg = String(e?.message || e?.name || 'Wallet error');
+    if (/user rejected|rejected the request|declined|cancel/i.test(msg)) return;
+    try { window.dispatchEvent(new CustomEvent('art:wallet-error', { detail: msg })); } catch { /* ignore */ }
+  }, []);
   return (
     <ConnectionProvider endpoint={endpoint}>
-      <WalletProvider wallets={wallets} autoConnect>
+      <WalletProvider wallets={wallets} autoConnect onError={onError}>
         <WalletModalProvider>{children}</WalletModalProvider>
       </WalletProvider>
     </ConnectionProvider>

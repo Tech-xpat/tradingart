@@ -2,9 +2,12 @@
 import { useEffect, useState } from 'react';
 import { useLiveTokens, LIST_SIZE, type Tok, type FeedStatus } from '@/lib/liveTokens';
 import type { TokenView } from '@/lib/dex';
+import { riskOf, type Risk } from '@/lib/risk';
 import { api, Sheet, ago, usd } from './shared';
 
 const STATUS_TEXT: Record<FeedStatus, string> = { connecting: 'Connecting…', live: 'Live', fallback: 'Backup feed' };
+
+const price = (p: number | null) => (p == null ? '–' : p < 0.0001 ? `$${p.toExponential(1)}` : p < 0.01 ? `$${p.toPrecision(3)}` : p < 1 ? `$${p.toFixed(4)}` : `$${p.toFixed(2)}`);
 
 /** What a card shows, preferring real market data when we have it and the live stream otherwise. */
 function view(t: Tok, solUsd: number | null) {
@@ -12,35 +15,50 @@ function view(t: Tok, solUsd: number | null) {
   const vol = t.dex ? t.dex.volume.h1 : (solUsd ? t.volSol * solUsd : null);
   const txns = t.dex ? t.dex.txns1h.buys + t.dex.txns1h.sells : t.buys + t.sells;
   const created = t.dex?.pairCreatedAt || t.createdAt;
-  return { mcap, vol, txns, created, change: t.dex?.change.h1 ?? null, liq: t.dex?.liquidityUsd ?? null };
+  const px = t.dex?.priceUsd ?? (mcap != null ? mcap / 1e9 : null); // pump.fun tokens have a 1B supply
+  return { mcap, vol, txns, created, change: t.dex?.change.h1 ?? null, liq: t.dex?.liquidityUsd ?? null, px };
 }
 
-function Avatar({ t }: { t: { image: string | null; symbol: string | null; name: string | null } }) {
+/** Small thumbnail: shrunk on our server to ~64px WebP, lazy, with initials until it arrives. */
+const thumb = (u: string | null, w = 64) => (u && /^https:\/\//.test(u) ? `/api/img?w=${w}&u=${encodeURIComponent(u)}` : null);
+function Avatar({ t, big }: { t: { image: string | null; symbol: string | null; name: string | null }; big?: boolean }) {
   const [bad, setBad] = useState(false);
   useEffect(() => setBad(false), [t.image]);
+  const src = thumb(t.image, big ? 128 : 64);
   return (
-    <div className="avatar" aria-hidden>
-      {t.image && !bad ? <img src={t.image} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setBad(true)} /> : (t.symbol || t.name || '?').slice(0, 2).toUpperCase()}
+    <div className={`avatar ${big ? 'big' : ''}`} aria-hidden>
+      <span>{(t.symbol || t.name || '?').slice(0, 2).toUpperCase()}</span>
+      {src && !bad && <img src={src} alt="" width={big ? 58 : 36} height={big ? 58 : 36} loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => setBad(true)} />}
+    </div>
+  );
+}
+
+function RiskBar({ risk }: { risk: Risk }) {
+  return (
+    <div className={`risk ${risk.level}`} title={`${risk.label} (${risk.score}/100). A quick estimate from liquidity, activity, buyers vs sellers, age and size. It cannot prove a token is safe.\n${risk.reasons.join('\n')}`}>
+      <div className="riskbar" role="meter" aria-label={`Safety score ${risk.score} of 100`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={risk.score}><i style={{ width: `${Math.max(6, risk.score)}%` }} /></div>
+      <span>{risk.label}</span>
     </div>
   );
 }
 
 function Card({ t, solUsd, now, onOpen }: { t: Tok; solUsd: number | null; now: number; onOpen: (m: string) => void }) {
   const v = view(t, solUsd);
+  const risk = riskOf(t, solUsd, now);
   return (
     <button className="tkcard" onClick={() => onOpen(t.mint)} aria-label={`Open ${t.name || t.mint}`}>
       <Avatar t={t} />
       <div className="tkname"><b>{t.name || 'New token'}</b><span>{t.symbol ? `$${t.symbol}` : ''}</span></div>
       <div className="tkage">{ago(now - (t.kind === 'migrated' && t.migratedAt ? t.migratedAt : v.created))}</div>
-      <div className="tkdesc">{t.description || ''}</div>
       <div className="tkstats">
+        <span>Price <b>{price(v.px)}</b></span>
         <span>MC <b>{usd(v.mcap)}</b></span>
         <span>Vol <b>{usd(v.vol)}</b></span>
-        <span>Tx <b>{v.txns || '–'}</b></span>
-        {v.liq != null && <span>Liq <b>{usd(v.liq)}</b></span>}
+        <span>Liq <b>{usd(v.liq)}</b></span>
         {v.change != null && <span className={v.change >= 0 ? 'up' : 'dn'}>{v.change >= 0 ? '+' : ''}{v.change.toFixed(1)}%</span>}
       </div>
-      {t.kind === 'new' && t.progress != null && <div className="meter" title={`About ${(t.progress * 100).toFixed(0)}% of the way to migration`}><i style={{ width: `${Math.round(t.progress * 100)}%` }} /></div>}
+      <RiskBar risk={risk} />
+      {t.kind === 'new' && t.progress != null && <div className="curve"><span>Curve {Math.round(t.progress * 100)}%</span><div className="meter" title={`About ${(t.progress * 100).toFixed(0)}% of the way to migration`}><i style={{ width: `${Math.round(t.progress * 100)}%` }} /></div></div>}
     </button>
   );
 }
@@ -70,7 +88,7 @@ function TokenSheet({ mint, seed, onClose }: { mint: string; seed: Tok | null; o
   return (
     <Sheet title={`${name}${symbol ? ` · $${symbol}` : ''}`} onClose={onClose} wide>
       <div className="thead">
-        <Avatar t={{ image, symbol: symbol || null, name }} />
+        <Avatar big t={{ image, symbol: symbol || null, name }} />
         <div style={{ minWidth: 0 }}>
           <div className="mono" style={{ fontSize: 12, color: 'var(--muted)', wordBreak: 'break-all' }}>{mint}</div>
           <div className="row" style={{ marginTop: 6 }}>

@@ -76,17 +76,19 @@ p { margin: 0 0 12px; color: var(--muted); }
 .colhead { display:none; align-items:center; justify-content:space-between; padding: 0 4px 8px; font: 600 12.5px var(--tech); letter-spacing:.08em; text-transform:uppercase; }
 .colhead small { font: 500 10.5px var(--mono); color: var(--muted); letter-spacing:.05em; }
 @media (min-width: 1000px) { .colhead { display:flex; } }
-.tkcard { display:grid; grid-template-columns: 52px minmax(0,1fr) auto; gap: 4px 12px; width:100%; text-align:left; padding: 11px 12px; margin-bottom: 8px; border:1px solid var(--line); border-radius: 14px; background: linear-gradient(180deg,#0e1017,#090a0e); transition: border-color .2s, transform .15s; animation: cardin .35s ease; }
+.tkcard { display:grid; grid-template-columns: 36px minmax(0,1fr) auto; gap: 6px 10px; align-items:center; width:100%; text-align:left; padding: 10px 12px; margin-bottom: 8px; border:1px solid var(--line); border-radius: 14px; background: linear-gradient(180deg,#0e1017,#090a0e); transition: border-color .2s, transform .15s; animation: cardin .35s ease; contain: content; }
 .tkcard:hover { border-color: rgba(198,255,61,.4); transform: translateY(-1px); }
 @keyframes cardin { from { opacity:0; transform: translateY(-8px); } }
 .avatar img { width:100%; height:100%; object-fit:cover; display:block; }
-.avatar { overflow:hidden; grid-row: span 3; width:52px; height:52px; border-radius: 12px; background: #151821; display:grid; place-items:center; font: 700 15px var(--tech); color: var(--lime2); border:1px solid var(--line); }
+.avatar { position:relative; overflow:hidden; width:36px; height:36px; border-radius: 10px; background: #151821; display:grid; place-items:center; font: 700 12px var(--tech); color: var(--lime2); border:1px solid var(--line); flex:none; }
+.avatar img { position:absolute; inset:0; }
+.avatar.big { width:58px; height:58px; font-size:15px; }
 .tkname { display:flex; gap:7px; align-items:baseline; min-width:0; }
 .tkname b { font-weight:700; font-size:14.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .tkname span { color: var(--muted); font: 500 11.5px var(--mono); }
 .tkage { font: 500 11.5px var(--mono); color: var(--lime2); text-align:right; }
-.tkdesc { grid-column: 2 / 4; color: var(--muted); font-size: 12px; line-height:1.35; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; min-height: 2.7em; }
-.tkstats { grid-column: 2 / 4; display:flex; gap: 12px; flex-wrap:wrap; font: 500 11.5px var(--mono); color: var(--muted); }
+.tkdesc_unused { grid-column: 2 / 4; color: var(--muted); font-size: 12px; line-height:1.35; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; min-height: 2.7em; }
+.tkstats { grid-column: 1 / 4; display:flex; gap: 12px; flex-wrap:wrap; font: 500 11.5px var(--mono); color: var(--muted); }
 .tkstats b { color: var(--ink); font-weight:500; }
 .meter { grid-column: 1 / 4; height:4px; border-radius:4px; background: rgba(255,255,255,.07); overflow:hidden; margin-top:4px; }
 .meter i { display:block; height:100%; background: linear-gradient(90deg,var(--yellow),var(--lime)); transition: width .6s; }
@@ -239,3 +241,14 @@ footer { padding: 26px 0 60px; color: var(--muted); font-size: 12px; max-width: 
 .plangrid { display:grid; grid-template-columns: 1fr auto; gap:6px 12px; font: 500 13px var(--mono); } .plangrid span { color: var(--muted); } .plangrid b { text-align:right; }
 .copyrow { display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:16px; }
 .dn { color: var(--down); } .up { color: var(--up); }
+
+.tkcard .meter { grid-column: 1 / 4; }
+.risk { grid-column: 1 / 4; display:grid; grid-template-columns: minmax(0,1fr) auto; gap:10px; align-items:center; font: 600 10.5px var(--mono); letter-spacing:.06em; text-transform:uppercase; }
+.riskbar { height:5px; border-radius:99px; background: rgba(255,255,255,.08); overflow:hidden; }
+.riskbar i { display:block; height:100%; border-radius:99px; transition: width .5s; }
+.risk.low { color: var(--up); } .risk.low .riskbar i { background: var(--up); }
+.risk.medium { color: var(--yellow); } .risk.medium .riskbar i { background: var(--yellow); }
+.risk.high { color: var(--down); } .risk.high .riskbar i { background: var(--down); }
+
+.curve { grid-column: 1 / 4; display:grid; grid-template-columns: auto minmax(0,1fr); gap:10px; align-items:center; font: 500 10.5px var(--mono); letter-spacing:.06em; text-transform:uppercase; color: var(--muted); }
+.curve .meter { margin:0; }

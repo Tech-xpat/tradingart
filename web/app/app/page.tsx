@@ -27,6 +27,15 @@ export default function Dashboard() {
   const wallet58 = publicKey?.toBase58() || null;
 
   const say = (kind: 'ok' | 'err', text: string) => setFlash({ kind, text });
+  useEffect(() => {
+    const h = (e: Event) => {
+      const m = String((e as CustomEvent).detail || '');
+      const flagged = /blocked|malicious|unverified|new domain|origin|not allowed/i.test(m);
+      setFlash({ kind: 'err', text: flagged ? `Your wallet blocked this site (${m}). New domains are flagged by wallets for a few days. You can choose “Proceed anyway” in the wallet warning, or try another wallet.` : `Wallet: ${m}` });
+    };
+    window.addEventListener('art:wallet-error', h);
+    return () => window.removeEventListener('art:wallet-error', h);
+  }, []);
   const run = async (key: string, fn: () => Promise<void>) => {
     setBusy(key); setFlash(null);
     try { await fn(); } catch (e: any) { say('err', e?.message || 'Something went wrong'); } finally { setBusy(null); }
@@ -133,6 +142,9 @@ export default function Dashboard() {
                   {!connected ? 'Connect any Solana wallet. Connecting only shares your public address.'
                     : <>Sign one message to prove this wallet is yours. <b>It does not move funds and gives ART no permission to spend anything.</b></>}
                 </p>
+                <details><summary>Wallet says “new domain” or won&apos;t connect?</summary>
+                  <p style={{ marginTop: 10 }}>Wallets such as Phantom show a warning for any newly registered website until it has been seen for a few days. It is the wallet being careful about a young domain, not a problem with your wallet. Choose “Proceed anyway” (connecting only shares your public address), or try Solflare / Backpack. If a wallet app on your phone refuses to connect, open this page inside the wallet app&apos;s own browser.</p>
+                </details>
                 <details><summary>Which wallets work?</summary>
                   <p style={{ marginTop: 10 }}>Anything that follows the Solana Wallet Standard is detected automatically: Phantom, Solflare, Backpack, Coinbase, Trust, Ledger and more. On Android, wallet apps connect through Mobile Wallet Adapter. On iPhone, open this page inside your wallet app&apos;s browser. Wallets that only support other chains (EVM-only) cannot sign for Solana.</p>
                 </details>
