@@ -7,13 +7,13 @@ import { randomUUID } from 'crypto';
 
 type Row = Record<string, any>;
 const UNIQUE: Record<string, string[][]> = {
-  art_users: [['wallet'], ['tg_chat_id']], art_vaults: [['user_id'], ['address']], art_settings: [['user_id']],
+  art_users: [['wallet'], ['tg_chat_id']], art_vaults: [['user_id'], ['address']], art_settings: [['user_id'], ['handle']],
   art_consents: [['user_id', 'message']], art_withdrawals: [['message']], art_link_codes: [['code']], art_state: [['user_id', 'key']],
 };
 const DEFAULTS: Record<string, () => Row> = {
   art_users: () => ({ id: randomUUID(), tg_chat_id: null, tg_username: null, created_at: new Date().toISOString() }),
   art_vaults: () => ({ created_at: new Date().toISOString() }),
-  art_settings: () => ({ mode: 'medium', paused: true, live: false, max_position_sol: 0.05, max_daily_loss_pct: 20, max_concurrent: 1, plans: [], active_plan: null, panic_at: null, updated_at: new Date().toISOString() }),
+  art_settings: () => ({ mode: 'medium', paused: true, live: false, max_position_sol: 0.05, max_daily_loss_pct: 20, max_concurrent: 1, plans: [], active_plan: null, public_profile: false, handle: null, follow_user_id: null, panic_at: null, updated_at: new Date().toISOString() }),
   art_consents: () => ({ id: Math.floor(Math.random() * 1e9), sig_kind: 'message', created_at: new Date().toISOString(), revoked_at: null }),
   art_withdrawals: () => ({ id: randomUUID(), status: 'pending', sig_kind: 'message', amount_lamports: null, tx_sig: null, error: null, created_at: new Date().toISOString(), processed_at: null }),
   art_state: () => ({ updated_at: new Date().toISOString() }),
@@ -31,6 +31,7 @@ export function startFakePostgrest(port: number) {
       const [op, ...rest] = v.split('.'); const val = rest.join('.');
       const eq = (r: Row) => String(r[k]) === val;
       if (op === 'eq') conds.push(eq);
+      else if (op === 'gte') conds.push((r) => String(r[k]) >= val);
       else if (op === 'neq') conds.push((r) => !eq(r));
       else if (op === 'is') conds.push((r) => (val === 'null' ? r[k] == null : r[k] === (val === 'true')));
       else if (op === 'in') { const set = val.replace(/^\(|\)$/g, '').split(',').map((s) => s.replace(/^"|"$/g, '')); conds.push((r) => set.includes(String(r[k]))); }

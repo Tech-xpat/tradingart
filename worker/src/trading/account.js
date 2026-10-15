@@ -175,6 +175,15 @@ class Book {
     return ((value - cost) / cost) * 100;
   }
 
+  /** progress trail for the chart: one sample at most every 4s, newest 150 kept */
+  trail(pos, pnl) {
+    const now = Date.now();
+    const t = (pos.trail ||= []);
+    if (t.length && now - t[t.length - 1][0] < 4000) return;
+    t.push([now, Math.round(pnl * 100) / 100]);
+    if (t.length > 150) t.splice(0, t.length - 150);
+  }
+
   async checkPosition(pos) {
     // exits use the numbers the position was OPENED with, so tightening or loosening settings later never surprises an open trade
     const tp = Number(pos.takeProfitPct) || 30;
@@ -183,7 +192,7 @@ class Book {
     let pnl = null;
     try {
       const mkt = await this.d.market.getTokenMarket(pos.mint);
-      if (mkt) { pnl = this.markPnl(pos, mkt.priceNative); pos.lastPrice = mkt.priceNative; pos.lastPnl = pnl; pos.priceMisses = 0; } else pos.priceMisses += 1;
+      if (mkt) { pnl = this.markPnl(pos, mkt.priceNative); pos.lastPrice = mkt.priceNative; pos.lastPnl = pnl; pos.priceMisses = 0; this.trail(pos, pnl); } else pos.priceMisses += 1;
     } catch (_) { pos.priceMisses += 1; }
     if (pos.priceMisses === 6) this.acct.notify(`⚠️ No price for ${short(pos.mint)} for a while. Only the max-hold timer can exit it now. /sellall sells it manually.`);
     let reason = null;
@@ -202,6 +211,8 @@ class Book {
         if (pos.status === 'stuck') { if (Date.now() >= (pos.retryAt || 0)) this.exit(pos, pos.exitReason || 'retry').catch(() => {}); continue; }
         await this.checkPosition(pos);
       }
+      // keep the stored copy fresh so the website shows live up/down moves (throttled)
+      if (this.open.size && Date.now() - (this.lastPersist || 0) >= 3000) { this.lastPersist = Date.now(); this.persistPositions(); }
     } finally { this.monitoring = false; }
   }
 

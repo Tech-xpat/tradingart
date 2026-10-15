@@ -106,3 +106,20 @@ test('two users never share positions or balances', async () => {
   await b.load(); assert.strictEqual(b.openCount(), 0);
   assert.strictEqual(b.books.paper.daily.paperBalanceSol, config.PAPER_BALANCE_SOL);
 });
+
+test('open trades keep a fresh up/down value and a progress trail in the stored state (live and paper alike)', async () => {
+  const deps = fakeDeps();
+  const a = mk(deps);
+  const book = a.entryBook();
+  book.open.set(MINT, { mint: MINT, openedAt: Date.now(), dryRun: true, status: 'open', costLamports: '1000000000', tokenRaw: '1000000000', decimals: 6, takeProfitPct: 500, stopLossPct: 90, maxHoldMin: 60, priceMisses: 0 });
+  deps.price.v = 0.001; // pnl is relative to the cost, whatever the price is
+  await book.monitorTick();
+  const saved = await deps.db.getState('u1', book.key('positions'));
+  assert.strictEqual(saved.length, 1);
+  assert.ok(Number.isFinite(saved[0].lastPnl), 'lastPnl is persisted every tick');
+  assert.strictEqual(saved[0].trail.length, 1);
+  await book.monitorTick(); // inside 4s: no extra sample, trail does not balloon
+  assert.strictEqual(book.open.get(MINT).trail.length, 1);
+  for (let i = 0; i < 200; i++) book.trail(book.open.get(MINT), i);
+  assert.ok(book.open.get(MINT).trail.length <= 150);
+});

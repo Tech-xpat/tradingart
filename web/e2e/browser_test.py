@@ -129,6 +129,36 @@ async def main():
             assert "off" in (await pg.locator(".rbar").get_attribute("class")), "bar is red when off"
             await pg.wait_for_timeout(600)
             await pg.screenshot(path=f"{OUT}/{name}_6_final.png", full_page=True)
+            # --- leaderboard: opt in for real, then browse a mocked board + profile, copy plan ---
+            await pg.get_by_label("Leaderboard handle").fill("Coach_" + name + os.urandom(2).hex())
+            await pg.get_by_role("button", name="Show me on the leaderboard").click(); await pg.wait_for_selector("text=You are on the leaderboard", timeout=8000)
+            assert await pg.get_by_role("button", name="Hide me from the leaderboard").count() == 1
+            curve = [0, 0.01, 0.008, 0.03, 0.05]
+            async def board(route):
+                await route.fulfill(status=200, content_type="application/json", body=json.dumps({"mode": "live", "period": "7d", "board": [
+                    {"rank": 1, "handle": "alpha", "me": False, "followers": 3, "pnlSol": 1.234, "pnlUsd": 185.1, "roiPct": 42, "winRate": 61, "trades": 33, "curve": curve},
+                    {"rank": 2, "handle": "coach_m", "me": True, "followers": 0, "pnlSol": -0.2, "pnlUsd": -30, "roiPct": -5, "winRate": 40, "trades": 5, "curve": [0, -0.1, -0.2]}]}))
+            async def prof(route):
+                await route.fulfill(status=200, content_type="application/json", body=json.dumps({"handle": "alpha", "me": False, "mode": "live", "following": False, "followers": 3,
+                    "stats": {"pnlSol": 1.234, "pnlUsd": 185.1, "todaySol": 0.1, "roiPct": 42, "winRate": 61, "trades": 33},
+                    "curve": [[i, v] for i, v in enumerate(curve)], "open": [{"mint": MINT, "openedAt": 1, "lastPnl": 12.5, "trail": [[1, 0], [2, 5], [3, 12.5]], "takeProfitPct": 50, "stopLossPct": 25}],
+                    "recent": [{"at": "2026-10-15T10:00:00Z", "mint": MINT, "realizedSol": 0.02, "pct": 40, "holdSec": 95, "reason": "take_profit"}],
+                    "plan": {"sizeUsd": 7, "minAgeSec": 30, "maxAgeSec": 1800, "takeProfitPct": 50, "stopLossPct": 25, "maxHoldMin": 3, "scanEverySec": 20, "maxTradesDay": 20, "minLiqUsd": 4000, "minVol1hUsd": 500, "minBuys1h": 5, "requireRising": False}}))
+            copies = []
+            async def copy(route):
+                copies.append(route.request.post_data); await route.fulfill(status=200, content_type="application/json", body="{\"ok\":true}")
+            await pg.route("**/api/leaderboard?**", board); await pg.route("**/api/profile?**", prof); await pg.route("**/api/copy", copy)
+            await pg.get_by_role("button", name="Leaders", exact=True).click()
+            await pg.get_by_role("button", name="Open @alpha").wait_for(timeout=8000)
+            assert await pg.locator(".lbrow").count() == 2
+            await pg.screenshot(path=f"{OUT}/{name}_7_leaders.png", full_page=True)
+            await pg.get_by_role("button", name="Open @alpha").click(); await pg.wait_for_selector("text=Progress map")
+            await pg.wait_for_selector("text=Trading now"); await pg.wait_for_selector("text=Their plan")
+            await pg.screenshot(path=f"{OUT}/{name}_8_profile.png", full_page=True)
+            await pg.get_by_role("button", name="Copy plan").click(); await pg.wait_for_selector("text=Saved @alpha")
+            await pg.get_by_role("button", name="Auto-copy").click(); await pg.wait_for_selector("text=Auto-copy on")
+            assert any('"auto":true' in (c or "") for c in copies) and any('"auto":false' in (c or "") for c in copies), copies
+            await pg.get_by_label("Close").click()
             ov = await pg.evaluate("document.documentElement.scrollWidth - window.innerWidth")
             results.append((name, "overflow", ov, "errors", errs[:4]))
             await ctx.close()

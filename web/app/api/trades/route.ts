@@ -12,7 +12,7 @@ export const GET = authed({ limit: [90, 60_000] }, async ({ session }) => {
   ]);
   const by: Record<string, any> = {};
   for (const r of must(state, 'state')) by[r.key] = r.value;
-  const open = (k: string) => (Array.isArray(by[k]) ? by[k] : []).map((p: any) => ({ mint: p.mint, openedAt: p.openedAt, sizeSol: p.sizeSol, lastPnl: p.lastPnl, status: p.status, takeProfitPct: p.takeProfitPct, stopLossPct: p.stopLossPct, buySig: p.buySig }));
+  const open = (k: string) => (Array.isArray(by[k]) ? by[k] : []).map((p: any) => ({ mint: p.mint, openedAt: p.openedAt, sizeSol: p.sizeSol, lastPnl: p.lastPnl, status: p.status, takeProfitPct: p.takeProfitPct, stopLossPct: p.stopLossPct, buySig: p.buySig, trail: (p.trail || []).slice(-60) }));
   return json({
     paper: { open: open('paper:positions'), daily: by['paper:daily'] || null },
     live: { open: open('live:positions'), daily: by['live:daily'] || null },

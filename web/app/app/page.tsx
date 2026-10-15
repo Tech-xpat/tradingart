@@ -7,6 +7,7 @@ import { useSign } from '@/components/useSign';
 import { api, short, Sheet, type Me } from './shared';
 import TokensTab from './Tokens';
 import RobotTab from './Robot';
+import LeadersTab from './Leaders';
 
 type SheetKind = null | 'fund' | 'withdraw' | 'perm';
 
@@ -16,7 +17,7 @@ export default function Dashboard() {
   const { connection } = useConnection();
   const { sendTransaction } = useWallet();
   const sign = useSign();
-  const [tab, setTab] = useState<'tokens' | 'robot'>('tokens');
+  const [tab, setTab] = useState<'tokens' | 'leaders' | 'robot'>('tokens');
   const [me, setMe] = useState<Me | null>(null);
   const [auth, setAuth] = useState<'checking' | 'out' | 'in'>('checking');
   const [busy, setBusy] = useState<string | null>(null);
@@ -89,6 +90,7 @@ export default function Dashboard() {
           <a className="brand" href="/"><span className="mark" />ART</a>
           <nav className="navtabs" aria-label="Sections">
             <button className={tab === 'tokens' ? 'on' : ''} onClick={() => setTab('tokens')}>Tokens</button>
+            <button className={tab === 'leaders' ? 'on' : ''} onClick={() => setTab('leaders')}>Leaders</button>
             <button className={tab === 'robot' ? 'on' : ''} onClick={() => setTab('robot')}>Robot</button>
           </nav>
           <span className="grow" />
@@ -116,6 +118,7 @@ export default function Dashboard() {
         )}
 
         {tab === 'tokens' && <TokensTab />}
+        {tab === 'leaders' && <LeadersTab signedIn={auth === 'in'} me={me} refresh={refresh} say={say} goRobot={() => setTab('robot')} />}
 
         {tab === 'robot' && (
           <>

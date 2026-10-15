@@ -214,6 +214,61 @@ test('withdraw to another address the owner chose, and trade-size rules', async 
   assert.strictEqual((await patch({ plans: Array.from({ length: 11 }, () => ({})) })).status, 400, 'at most ten');
 });
 
+test('leaderboard: opt-in only, ranked profit, profile, copy plan, auto-copy follows the leader', async () => {
+  const A = new Browser(), B = new Browser(), wa = mkWallet(), wb = mkWallet();
+  await A.signIn(wa); await B.signIn(wb);
+  const meA = (await A.call('/api/me')).json, meB = (await B.call('/api/me')).json;
+  const uidA = pg.tables.art_users.find((u) => u.wallet === wa.address)!.id;
+  const row = (over: any) => ({ user_id: uidA, paper: false, mint: 'M'.repeat(8), cost_sol: 0.05, ...over });
+  const now = Date.now();
+  pg.tables.art_trades = [row({ realized_sol: 0.02, created_at: new Date(now - 3600e3).toISOString(), pct: 40, exit_reason: 'take_profit' }), row({ realized_sol: -0.005, created_at: new Date(now - 1800e3).toISOString(), pct: -10, exit_reason: 'stop_loss' }), row({ paper: true, realized_sol: 9 })];
+  pg.tables.art_state.push({ user_id: uidA, key: 'live:positions', value: [{ mint: 'OPENMINT1', openedAt: now - 20000, lastPnl: 12.5, trail: [[now - 8000, 1], [now - 4000, 12.5]], takeProfitPct: 50, stopLossPct: 25 }] });
+  // not public yet: nobody on the board, no profile
+  assert.deepStrictEqual((await B.call('/api/leaderboard?mode=live&period=all')).json.board, []);
+  assert.strictEqual((await B.call('/api/profile?handle=alpha')).status, 404);
+  // opting in needs a valid, unique handle
+  const patchA = (body: any) => A.call('/api/settings', { method: 'PATCH', body });
+  assert.strictEqual((await patchA({ publicProfile: true })).status, 400, 'handle required');
+  assert.strictEqual((await patchA({ handle: 'a b', publicProfile: true })).status, 400, 'bad handle');
+  assert.strictEqual((await patchA({ handle: 'Alpha', publicProfile: true })).status, 200);
+  assert.strictEqual((await B.call('/api/settings', { method: 'PATCH', body: { handle: 'alpha', publicProfile: true } })).status, 400, 'handle taken');
+  const lb = (await B.call('/api/leaderboard?mode=live&period=all')).json.board;
+  assert.strictEqual(lb.length, 1); assert.strictEqual(lb[0].handle, 'alpha'); assert.strictEqual(lb[0].trades, 2); assert.ok(Math.abs(lb[0].pnlSol - 0.015) < 1e-9, 'live only, paper excluded'); assert.strictEqual(lb[0].rank, 1);
+  assert.ok(!JSON.stringify(lb).includes(wa.address), 'never the wallet');
+  const prof = (await B.call('/api/profile?handle=alpha&mode=live')).json;
+  assert.strictEqual(prof.stats.trades, 2); assert.strictEqual(prof.curve.length, 2); assert.strictEqual(prof.open[0].lastPnl, 12.5); assert.strictEqual(prof.open[0].trail.length, 2);
+  assert.strictEqual(prof.plan.sizeUsd, 7); assert.strictEqual(prof.following, false);
+  assert.ok(!JSON.stringify(prof).includes(wa.address) && !JSON.stringify(prof).includes('vault'));
+  // copy: saved, not switched on; own limits untouched; cannot copy yourself
+  assert.strictEqual((await A.call('/api/copy', { method: 'POST', body: { handle: 'alpha' } })).status, 400);
+  assert.strictEqual((await B.call('/api/copy', { method: 'POST', body: { handle: 'nobody' } })).status, 404);
+  assert.strictEqual((await B.call('/api/copy', { method: 'POST', body: { handle: 'alpha' } })).status, 200);
+  let b1 = (await B.call('/api/me')).json.settings;
+  assert.strictEqual(b1.plans.length, 3); assert.strictEqual(b1.active_plan, 'steady'); assert.strictEqual(b1.follow_user_id, null);
+  const cp = b1.plans.find((p: any) => p.id.startsWith('cp-')); assert.strictEqual(cp.name, '@alpha'); assert.strictEqual(cp.sizeUsd, 7);
+  assert.strictEqual(b1.max_position_sol, meB.settings.max_position_sol, 'safety limits untouched');
+  // auto-copy: switched on, then follows the leader's plan changes
+  assert.strictEqual((await B.call('/api/copy', { method: 'POST', body: { handle: 'alpha', auto: true } })).status, 200);
+  b1 = (await B.call('/api/me')).json.settings; assert.strictEqual(b1.active_plan, cp.id); assert.ok(b1.follow_user_id);
+  assert.strictEqual(b1.plans.length, 3, 're-copy replaces, not piles up');
+  assert.strictEqual((await B.call('/api/profile?handle=alpha')).json.following, true);
+  const sniperA = meA.settings.plans.find((p: any) => p.id === 'sniper');
+  assert.strictEqual((await patchA({ activePlan: 'sniper' })).status, 200);
+  b1 = (await B.call('/api/me')).json.settings; const cp2 = b1.plans.find((p: any) => p.id === cp.id);
+  assert.strictEqual(cp2.sizeUsd, sniperA.sizeUsd); assert.strictEqual(cp2.maxHoldMin, sniperA.maxHoldMin); assert.strictEqual(cp2.scanEverySec, 20, 'mirrors the leader');
+  // deleting the copied plan ends auto-copy
+  const rest = b1.plans.filter((p: any) => p.id !== cp.id);
+  assert.strictEqual((await B.call('/api/settings', { method: 'PATCH', body: { plans: rest } })).status, 200);
+  assert.strictEqual((await B.call('/api/me')).json.settings.follow_user_id, null);
+  // going private removes the profile and releases followers
+  await B.call('/api/copy', { method: 'POST', body: { handle: 'alpha', auto: true } });
+  assert.strictEqual((await patchA({ publicProfile: false })).status, 200);
+  assert.strictEqual((await B.call('/api/me')).json.settings.follow_user_id, null);
+  assert.strictEqual((await B.call('/api/profile?handle=alpha')).status, 404);
+  assert.deepStrictEqual((await B.call('/api/leaderboard?period=all')).json.board, []);
+  void meB;
+});
+
 test('panic pauses the robot and stamps panic_at for the worker', async () => {
   const w = mkWallet(); const b = new Browser(); await b.signIn(w);
   await b.call('/api/settings', { method: 'PATCH', body: { paused: false } });

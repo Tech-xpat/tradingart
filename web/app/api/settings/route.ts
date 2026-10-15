@@ -3,6 +3,7 @@ import { db, must } from '@/lib/db';
 import { env, LIMITS } from '@/lib/env';
 import { solBalance } from '@/lib/chain';
 import { sanitizePlan, MAX_PLANS } from '@/lib/planrules';
+import { HANDLE_RE, copyId, propagate } from '@/lib/copy';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -48,12 +49,28 @@ export const PATCH = authed({ write: true, limit: [40, 60_000] }, async ({ req, 
       return { ...clean, id };
     });
     patch.plans = plans;
+    // deleting the copied plan ends auto-copy
+    if (cur.follow_user_id && !plans.some((p: any) => p.id === copyId(cur.follow_user_id))) patch.follow_user_id = null;
     const wanted = String(b.activePlan ?? cur.active_plan ?? '');
     patch.active_plan = plans.some((p: any) => p.id === wanted) ? wanted : plans[0].id;
   } else if (b.activePlan !== undefined) {
     const list = Array.isArray(cur.plans) ? cur.plans : [];
     if (!list.some((p: any) => p.id === b.activePlan)) return fail('unknown plan');
     patch.active_plan = String(b.activePlan);
+  }
+
+  // leaderboard profile: opt-in, with a public handle (never the wallet)
+  let profileChanged = false;
+  if (b.handle !== undefined || b.publicProfile !== undefined) {
+    const handle = String(b.handle !== undefined ? b.handle : cur.handle || '').trim().toLowerCase();
+    const pub = b.publicProfile !== undefined ? !!b.publicProfile : !!cur.public_profile;
+    if (handle && !HANDLE_RE.test(handle)) return fail('Handle: 3 to 20 letters, numbers or underscore.');
+    if (pub && !handle) return fail('Pick a handle to appear on the leaderboard.');
+    if (handle && handle !== cur.handle) {
+      const taken = must(await sb.from('art_settings').select('user_id').eq('handle', handle).maybeSingle(), 'handle');
+      if (taken && taken.user_id !== session.userId) return fail('That handle is taken.');
+    }
+    patch.handle = handle || null; patch.public_profile = pub; profileChanged = true;
   }
 
   if (b.live !== undefined) {
@@ -71,5 +88,8 @@ export const PATCH = authed({ write: true, limit: [40, 60_000] }, async ({ req, 
   if (!Object.keys(patch).length) return fail('nothing to change');
   patch.updated_at = new Date().toISOString();
   must(await sb.from('art_settings').update(patch).eq('user_id', session.userId), 'update');
+  // followers mirror a leader's active plan; going private releases them (they keep the plan they saved)
+  if (patch.public_profile === false && cur.public_profile) await sb.from('art_settings').update({ follow_user_id: null }).eq('follow_user_id', session.userId);
+  else if (patch.plans !== undefined || patch.active_plan !== undefined || profileChanged) await propagate(sb, session.userId).catch(() => 0);
   return json({ ok: true, settings: { ...cur, ...patch } });
 });

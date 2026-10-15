@@ -5,7 +5,7 @@ export type Plan = {
   id: string; name: string; sizeUsd: number; minAgeSec: number; maxAgeSec: number | null; takeProfitPct: number; stopLossPct: number;
   maxHoldMin: number; scanEverySec: number; maxTradesDay: number; minLiqUsd: number; minVol1hUsd: number; minBuys1h: number; requireRising: boolean;
 };
-export type Settings = { paused: boolean; live: boolean; max_position_sol: number; max_daily_loss_pct: number; max_concurrent: number; plans: Plan[]; active_plan: string | null };
+export type Settings = { paused: boolean; live: boolean; max_position_sol: number; max_daily_loss_pct: number; max_concurrent: number; plans: Plan[]; active_plan: string | null; public_profile?: boolean; handle?: string | null; follow_user_id?: string | null };
 export type Me = {
   wallet: string; telegramLinked: boolean; liveEnabled: boolean; solUsd: number | null;
   vault: { address: string; balanceSol: number | null } | null;
@@ -14,7 +14,7 @@ export type Me = {
   withdrawals: { id: string; amount_lamports: string | null; status: string; tx_sig: string | null; error: string | null; created_at: string }[];
   limits: { maxPositionSol: { min: number; max: number }; maxDailyLossPct: { min: number; max: number }; maxConcurrent: { min: number; max: number }; minVaultSolForLive: number; minSizeUsd: number; defaultSizeUsd: number };
 };
-export type Pos = { mint: string; openedAt: number; sizeSol: number; lastPnl: number | null; status: string; takeProfitPct: number; stopLossPct: number; mode?: string };
+export type Pos = { mint: string; openedAt: number; sizeSol: number; lastPnl: number | null; status: string; takeProfitPct: number; stopLossPct: number; mode?: string; trail?: [number, number][] };
 export type Trades = { paper: { open: Pos[]; daily: any }; live: { open: Pos[]; daily: any }; trades: any[] };
 
 export const short = (s: string) => `${s.slice(0, 4)}…${s.slice(-4)}`;
@@ -65,5 +65,22 @@ export function Slider({ label, value, min, max, step, v, onChange, disabled }: 
       <div><span>{label}</span><b>{value}</b></div>
       <input type="range" aria-label={label} min={min} max={max} step={step} value={v} disabled={disabled} onChange={(e) => onChange(Number(e.target.value))} />
     </div>
+  );
+}
+
+/** A small line chart. `values` are plain numbers; green when the last point is at or above the first, red below. */
+export function Spark({ values, w = 120, h = 34, zero, label }: { values: number[]; w?: number; h?: number; zero?: boolean; label?: string }) {
+  if (values.length < 2) return <svg className="spark" width={w} height={h} role="img" aria-label={label || 'no data yet'}><line x1="0" x2={w} y1={h / 2} y2={h / 2} stroke="currentColor" opacity=".25" strokeDasharray="3 3" /></svg>;
+  const lo = Math.min(...values, zero ? 0 : Infinity), hi = Math.max(...values, zero ? 0 : -Infinity);
+  const span = hi - lo || 1;
+  const x = (i: number) => (i / (values.length - 1)) * (w - 2) + 1;
+  const y = (v: number) => h - 2 - ((v - lo) / span) * (h - 4);
+  const d = values.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(' ');
+  const up = values[values.length - 1] >= values[0];
+  return (
+    <svg className={`spark ${up ? 'up' : 'dn'}`} width={w} height={h} viewBox={`0 0 ${w} ${h}`} role="img" aria-label={label || 'progress chart'}>
+      {zero && lo < 0 && hi > 0 && <line x1="0" x2={w} y1={y(0)} y2={y(0)} stroke="currentColor" opacity=".25" strokeDasharray="3 3" />}
+      <path d={d} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" />
+    </svg>
   );
 }

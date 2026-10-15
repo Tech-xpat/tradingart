@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api, short, sol, signed, ago, Slider, type Me, type Plan, type Trades } from './shared';
+import { api, short, sol, signed, ago, Slider, Spark, type Me, type Plan, type Trades } from './shared';
 import type { Proof } from '@/components/useSign';
 
 type RunFn = (k: string, f: () => Promise<void>) => Promise<void>;
@@ -62,6 +62,7 @@ export default function RobotTab({ me, refresh, run, busy, say, sign, openSheet 
   /* ───── plan editor (local draft, saved explicitly) ───── */
   const [draft, setDraft] = useState<Plan | null>(active || null);
   const [dirty, setDirty] = useState(false);
+  const [handle, setHandle] = useState(s.handle || '');
   const draftId = useRef<string | undefined>(active?.id);
   useEffect(() => {
     if (!active) return;
@@ -114,7 +115,7 @@ export default function RobotTab({ me, refresh, run, busy, say, sign, openSheet 
   const [trades, setTrades] = useState<Trades | null>(null);
   const [tab, setTab] = useState<'open' | 'history'>('open');
   const loadTrades = useCallback(async () => { try { setTrades(await api<Trades>('/api/trades')); } catch { /* next poll */ } }, []);
-  useEffect(() => { loadTrades(); const t = setInterval(loadTrades, 8000); return () => clearInterval(t); }, [loadTrades]);
+  useEffect(() => { loadTrades(); const t = setInterval(loadTrades, 4000); return () => clearInterval(t); }, [loadTrades]);
   const openList = trades ? (isLive ? trades.live.open : trades.paper.open) : [];
   const history = (trades?.trades || []).filter((t) => !!t.paper === !isLive);
   const liveOpen = trades?.live.open.length || 0; void liveOpen;
@@ -244,6 +245,17 @@ export default function RobotTab({ me, refresh, run, busy, say, sign, openSheet 
         </div>
 
         <div className="panel">
+          <div className="panel-head"><h2>Leaderboard profile</h2>{s.public_profile && <span className="tag">public</span>}</div>
+          <p className="hint">Opt in to appear on the leaderboard. Others see your handle, profit, trade results and active plan so they can copy it. Never your wallet, balance or vault.</p>
+          <div className="row2">
+            <div><span className="lbl">Handle</span><input className="field" aria-label="Leaderboard handle" maxLength={20} placeholder="e.g. coach_mishael" value={handle} onChange={(e) => setHandle(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))} /></div>
+            <button className={`btn ${s.public_profile ? 'btn-ghost' : 'btn-gold'} sm`} aria-label={s.public_profile ? 'Hide me from the leaderboard' : 'Show me on the leaderboard'} disabled={!!busy}
+              onClick={() => patch('profile', { handle, publicProfile: !s.public_profile }, s.public_profile ? 'You are hidden from the leaderboard.' : 'You are on the leaderboard.')}>{s.public_profile ? 'Hide me' : 'Show me'}</button>
+          </div>
+          {s.follow_user_id && <p className="hint">Auto-copy is on: your active plan follows the trader you copied. <button className="linkbtn" onClick={() => run('stopcopy', async () => { await api('/api/copy', { method: 'POST', body: JSON.stringify({ stop: true }) }); await refresh(); say('ok', 'Auto-copy stopped. The plan stays in your list.'); })}>Stop auto-copy</button></p>}
+        </div>
+
+        <div className="panel">
           <div className="panel-head">
             <h2>Activity</h2>
             <div className="tabs">
@@ -257,6 +269,7 @@ export default function RobotTab({ me, refresh, run, busy, say, sign, openSheet 
             ) : openList.map((p) => (
               <div className="feed" key={p.mint}>
                 <div><b>{short(p.mint)}</b><span>{sol(p.sizeSol)} SOL · exits +{p.takeProfitPct}% / −{p.stopLossPct}% · {ago(Date.now() - p.openedAt)}</span></div>
+                <Spark values={(p.trail || []).map((x) => x[1])} w={64} h={26} zero label={`Progress of ${short(p.mint)}`} />
                 <strong className={p.lastPnl == null ? '' : p.lastPnl >= 0 ? 'up' : 'dn'}>{p.lastPnl == null ? '…' : `${p.lastPnl >= 0 ? '+' : ''}${p.lastPnl.toFixed(1)}%`}</strong>
               </div>
             ))
