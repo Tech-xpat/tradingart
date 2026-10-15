@@ -75,7 +75,7 @@ class Book {
     const bal = await this.currentBalanceSol();
     const usable = Math.max(0, bal - config.SOL_FEE_RESERVE);
     const solUsd = await this.d.scanner.fetchSolPriceUsd();
-    let sol = (Number(plan.sizeUsd) || 5) / solUsd;
+    let sol = (Number(plan.sizeUsd) || 7) / solUsd;
     sol = Math.min(sol, Number(plan.maxPositionSol) || 0.05);
     sol = Math.min(sol, usable * 0.95);
     if (sol < config.MIN_POSITION_SOL) sol = 0;
@@ -130,6 +130,7 @@ class Book {
       const mkt = await market.getTokenMarket(mint);
       if (!mkt) return { ok: false, why: 'no SOL-quoted market found' };
       if (mkt.liquidityUsd < config.MIN_LIQUIDITY_USD) return { ok: false, why: `liquidity $${Math.round(mkt.liquidityUsd)} < $${config.MIN_LIQUIDITY_USD}` };
+      if (config.MAX_POOL_SHARE_PCT > 0 && plan.sizeUsd > (mkt.liquidityUsd * config.MAX_POOL_SHARE_PCT) / 100) return { ok: false, why: `size $${plan.sizeUsd} is more than ${config.MAX_POOL_SHARE_PCT}% of the pool ($${Math.round(mkt.liquidityUsd)})` };
       if (config.REQUIRE_NO_AUTHORITIES) {
         const mi = await chain.getMintInfo(mint);
         if (mi.mintAuthority || mi.freezeAuthority) return { ok: false, why: 'mint/freeze authority still active' };
@@ -149,7 +150,7 @@ class Book {
         mint, openedAt: Date.now(), dryRun: this.paper, status: 'open',
         costLamports: String(fill.costLamports), tokenRaw: String(fill.tokenRaw), decimals: fill.decimals,
         sizeSol: costSol, sizeUsd: plan.sizeUsd, entryPriceNative: costSol / tokensUi, fillSource: fill.source, buySig: fill.signature,
-        reason, mode: plan.riskProfile, ageDays: mkt.ageDays ?? null, liquidityUsd: mkt.liquidityUsd ?? null, volume1h: mkt.volume1h ?? null,
+        reason, mode: plan.riskProfile, ageDays: mkt.ageDays ?? null, ageSec: mkt.ageSec ?? null, liquidityUsd: mkt.liquidityUsd ?? null, volume1h: mkt.volume1h ?? null,
         priceChange1h: mkt.priceChange1h ?? null, priceChange6h: mkt.priceChange6h ?? null, buys1h: mkt.buys1h ?? null, score: m ? Number(m[1]) : null,
         takeProfitPct: plan.takeProfitPct, stopLossPct: plan.stopLossPct, maxHoldMin: plan.maxHoldMin,
         lastPnl: null, lastPrice: null, priceMisses: 0, stuckRounds: 0,
@@ -328,7 +329,9 @@ class Account {
     this.consent = consent || null;
     if (vault && vault.vaultAddress && vault.vaultAddress !== this.vaultAddress) { this.vaultAddress = vault.vaultAddress; this.sealed = vault.sealed; this._signer = null; }
     const { effectivePlan } = require('../plans');
+    const before = this.plan && this.plan.name + ':' + this.plan.scanEverySec;
     this.plan = effectivePlan(settings, this.consent);
+    if (before && before !== this.plan.name + ':' + this.plan.scanEverySec) this.nextScanAt = 0; // switched plan: scan right away
     // live needs EVERYTHING: platform switch on, user chose live, a vault exists, and a signed consent exists
     this.liveAllowed = !!(config.LIVE_TRADING_ENABLED && settings.live && this.vaultAddress && this.consent);
   }

@@ -1,19 +1,49 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { PRESETS, effectivePlan } = require('../src/plans');
+const { effectivePlan, sanitizePlan, defaultPlans, activePlan } = require('../src/plans');
+const scanner = require('../src/scanner/scanner');
+const stream = require('../src/scanner/stream');
 
-test('each mode has the agreed minimum trade size in USD', () => {
-  assert.deepStrictEqual([PRESETS.easy.sizeUsd, PRESETS.medium.sizeUsd, PRESETS.hard.sizeUsd], [5, 10, 20]);
+test('default minimum trade is $7 and there is no maximum', () => {
+  assert.strictEqual(sanitizePlan({}).sizeUsd, 7);
+  assert.strictEqual(sanitizePlan({ sizeUsd: 5000 }).sizeUsd, 5000);
+  assert.strictEqual(effectivePlan({}, null).sizeUsd, 7);
+  assert.strictEqual(effectivePlan({ plans: [{ id: 'x', name: 'Big', sizeUsd: 25000 }], active_plan: 'x' }, null).sizeUsd, 25000);
 });
-test('with no custom size the plan uses the mode minimum', () => {
-  for (const [mode, usd] of [['easy', 5], ['medium', 10], ['hard', 20]]) assert.strictEqual(effectivePlan({ mode }, null).sizeUsd, usd);
+test('plans are sanitised: ranges clamp, bad max age is dropped, names trimmed', () => {
+  const p = sanitizePlan({ name: '  ' + 'x'.repeat(40), minAgeSec: 100, maxAgeSec: 50, stopLossPct: 500, scanEverySec: 1, sizeUsd: -3, minLiqUsd: 'abc' });
+  assert.strictEqual(p.name.length, 24); assert.strictEqual(p.maxAgeSec, null); assert.strictEqual(p.stopLossPct, 95);
+  assert.strictEqual(p.scanEverySec, 10); assert.strictEqual(p.sizeUsd, 1); assert.strictEqual(p.minLiqUsd, 8000);
 });
-test('a user may raise the size, but never go below the mode minimum, and the platform cap applies', () => {
-  assert.strictEqual(effectivePlan({ mode: 'medium', size_usd: 35 }, null).sizeUsd, 35);
-  assert.strictEqual(effectivePlan({ mode: 'hard', size_usd: 7 }, null).sizeUsd, 20, 'below the minimum is lifted to it');
-  assert.strictEqual(effectivePlan({ mode: 'easy', size_usd: 100000 }, null).sizeUsd, 100, 'platform cap');
+test('the active plan is the one the user switched to; unknown id falls back to the first', () => {
+  const plans = defaultPlans();
+  assert.strictEqual(activePlan({ plans, active_plan: 'sniper' }).name, 'Sniper');
+  assert.strictEqual(activePlan({ plans, active_plan: 'nope' }).name, 'Steady');
+  assert.strictEqual(activePlan({}).name, 'Steady');
 });
-test('the SOL spend cap still wins over a large USD size', () => {
-  const p = effectivePlan({ mode: 'easy', size_usd: 80, max_position_sol: 0.05 }, { maxPositionSol: 0.04 });
-  assert.strictEqual(p.maxPositionSol, 0.04);
+test('safety limits still can only tighten', () => {
+  const p = effectivePlan({ max_position_sol: 5, max_daily_loss_pct: 90, max_concurrent: 9 }, { maxPositionSol: 0.3, maxDailyLossPct: 15, maxConcurrent: 2 });
+  assert.deepStrictEqual([p.maxPositionSol, p.maxDailyLossPct, p.maxConcurrent], [0.3, 15, 2]);
+});
+const base = { priceNative: 1, liquidityUsd: 20000, volume1h: 5000, volume6h: 9000, priceChange5m: 1, priceChange1h: 5, priceChange6h: 5, priceChange24h: 1, buys1h: 30, sells1h: 10, pairCreatedAt: 1 };
+test('the age window works down to seconds, with an optional upper bound', () => {
+  const plan = sanitizePlan({ minAgeSec: 30, maxAgeSec: 600, minLiqUsd: 4000, minVol1hUsd: 500, minBuys1h: 5, requireRising: false });
+  assert.strictEqual(scanner.scoreChart({ ...base, ageSec: 10 }, plan), -Infinity, 'too young');
+  assert.ok(scanner.scoreChart({ ...base, ageSec: 45 }, plan) > 0);
+  assert.strictEqual(scanner.scoreChart({ ...base, ageSec: 3600 }, plan), -Infinity, 'too old');
+  const open = sanitizePlan({ minAgeSec: 86400, maxAgeSec: null });
+  assert.ok(scanner.scoreChart({ ...base, ageSec: 86400 * 400 }, open) > 0, 'no max = unlimited');
+});
+test('requireRising can be switched off for brand-new coins', () => {
+  const flat = { ...base, ageSec: 60, priceChange1h: 0, priceChange6h: 0 };
+  assert.strictEqual(scanner.scoreChart(flat, sanitizePlan({ minAgeSec: 0, requireRising: true })), -Infinity);
+  assert.ok(scanner.scoreChart(flat, sanitizePlan({ minAgeSec: 0, requireRising: false })) > -Infinity);
+});
+test('the live stream remembers new and migrated mints and filters by age window', () => {
+  stream._feed({ txType: 'create', mint: 'MintA' + 'x'.repeat(30), name: 'A' });
+  stream._feed({ txType: 'migrate', mint: 'MintB' + 'x'.repeat(30) });
+  stream._feed({ txType: 'buy', mint: 'Ignored' });
+  assert.strictEqual(stream.size(), 2);
+  assert.strictEqual(stream.recent(0, 60).length, 2);
+  assert.strictEqual(stream.recent(3600, null).length, 0, 'nothing is an hour old yet');
 });

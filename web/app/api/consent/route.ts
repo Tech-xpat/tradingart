@@ -46,6 +46,6 @@ export const POST = authed({ write: true, limit: [10, 60_000] }, async ({ req, s
   if (ins.error) return fail(ins.error.code === '23505' ? 'this signature was already used' : 'could not save consent', 409);
   // the new consent replaces any earlier one
   await sb.from('art_consents').update({ revoked_at: new Date().toISOString() }).eq('user_id', session.userId).is('revoked_at', null).neq('id', ins.data.id);
-  must(await sb.from('art_settings').update({ mode: limits.mode, max_position_sol: limits.maxPositionSol, max_daily_loss_pct: limits.maxDailyLossPct, max_concurrent: limits.maxConcurrent, updated_at: new Date().toISOString() }).eq('user_id', session.userId), 'settings');
+  must(await sb.from('art_settings').update({ max_position_sol: limits.maxPositionSol, max_daily_loss_pct: limits.maxDailyLossPct, max_concurrent: limits.maxConcurrent, updated_at: new Date().toISOString() }).eq('user_id', session.userId), 'settings');
   return json({ ok: true, limits });
 });

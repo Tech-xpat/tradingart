@@ -24,8 +24,8 @@ module.exports = {
   SOL_MINT: 'So11111111111111111111111111111111111111112',
 
   // platform hard caps
-  CAP_MAX_POSITION_SOL: num('CAP_MAX_POSITION_SOL', 0.25),
-  CAP_MAX_SIZE_USD: num('CAP_MAX_SIZE_USD', 100),
+  CAP_MAX_POSITION_SOL: num('CAP_MAX_POSITION_SOL', 0), // 0 = no platform cap; the user's signed limit applies
+  CAP_MAX_SIZE_USD: num('CAP_MAX_SIZE_USD', 0), // 0 = no platform cap on trade size
   CAP_MAX_DAILY_LOSS_PCT: num('CAP_MAX_DAILY_LOSS_PCT', 50),
   CAP_MAX_CONCURRENT: num('CAP_MAX_CONCURRENT', 3),
   MIN_VAULT_SOL: num('MIN_VAULT_SOL', 0.05),
@@ -52,9 +52,15 @@ module.exports = {
   IGNORE_MINTS: list('IGNORE_MINTS'),
 
   // paper
-  SCAN_RELAXED: bool('SCAN_RELAXED', false),
   PAPER_BALANCE_SOL: num('PAPER_BALANCE_SOL', 1),
   PAPER_FRICTION_PCT: num('PAPER_FRICTION_PCT', 2),
+
+  // never let one order be a large share of the pool (price impact): skip if size > this % of pool liquidity
+  MAX_POOL_SHARE_PCT: num('MAX_POOL_SHARE_PCT', 5),
+
+  // live new-token feed (PumpPortal websocket) used to find very young coins
+  STREAM_ENABLED: bool('STREAM_ENABLED', true),
+  STREAM_URL: process.env.STREAM_URL || 'wss://pumpportal.fun/api/data',
 
   // loops
   PRICE_POLL_MS: num('PRICE_POLL_MS', 8000),

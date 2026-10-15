@@ -5,7 +5,7 @@ const { Engine } = require('../src/engine');
 const MINT = 'MintMintMintMintMintMintMintMintMintMint1';
 function mkEngine(users) {
   const state = new Map(); const sent = []; const picks = [];
-  const settings = users.map((u) => ({ user_id: u.id, mode: u.mode, paused: !!u.paused, live: false, max_position_sol: 0.05, max_daily_loss_pct: 20, max_concurrent: 1, panic_at: u.panic_at || null }));
+  const settings = users.map((u) => ({ user_id: u.id, plans: u.plans, active_plan: u.plan, paused: !!u.paused, live: false, max_position_sol: 0.05, max_daily_loss_pct: 20, max_concurrent: 1, panic_at: u.panic_at || null }));
   const db = {
     async settingsRunning() { return settings.filter((s) => !s.paused); },
     async usersWithOpenPositions() { return [...state.entries()].filter(([k, v]) => k.endsWith('positions') && v.length).map(([k]) => k.split('|')[0]); },
@@ -21,26 +21,27 @@ function mkEngine(users) {
     market: { async getTokenMarket() { return { priceNative: price.v, liquidityUsd: 50000, ageDays: 30, volume1h: 9000, buys1h: 40 }; } },
     chain: { async getMintInfo() { return { mintAuthority: null, freezeAuthority: null }; } },
     swap: {}, fills: {},
-    scanner: { async fetchSolPriceUsd() { return 200; }, async pickOne(mode) { picks.push(mode); return { mint: MINT, score: 42, mkt: {} }; } },
+    scanner: { async fetchSolPriceUsd() { return 200; }, async pickOne(plan, key) { picks.push(key); return { mint: MINT, score: 42, mkt: {} }; } },
   };
   const eng = new Engine({ db, deps, unsealSecret: () => { throw new Error('no'); }, send: (chat, text) => sent.push([chat, text]) });
   return { eng, sent, picks, price, state };
 }
 
-test('one scan per mode, fanned out to every active account in that mode, each with their own state', async () => {
-  const { eng, sent, picks } = mkEngine([{ id: 'a', mode: 'medium', chat: 1 }, { id: 'b', mode: 'medium', chat: 2 }, { id: 'c', mode: 'easy', chat: 3 }, { id: 'p', mode: 'hard', paused: true, chat: 4 }]);
+test('each running account scans on its own plan and keeps its own state', async () => {
+  const { eng, sent, picks } = mkEngine([{ id: 'a', chat: 1 }, { id: 'b', chat: 2, plan: 'sniper' }, { id: 'p', paused: true, chat: 4 }]);
   await eng.sync();
-  assert.strictEqual(eng.accounts.size, 3, 'paused user with no open trades is not loaded');
+  assert.strictEqual(eng.accounts.size, 2, 'paused user with no open trades is not loaded');
+  assert.strictEqual(eng.accounts.get('a').plan.name, 'Steady'); assert.strictEqual(eng.accounts.get('b').plan.name, 'Sniper');
   await eng.scanTick();
-  assert.deepStrictEqual(picks.sort(), ['easy', 'medium'], 'one scan per mode, none for hard (nobody running)');
-  assert.deepStrictEqual(sent.map((s) => s[0]).sort(), [1, 2, 3]);
+  assert.deepStrictEqual(picks.sort(), ['a', 'b'], 'one scan per running account, none for the paused one');
+  assert.deepStrictEqual(sent.map((s) => s[0]).sort(), [1, 2]);
   assert.ok(sent.every((s) => /ENTERED/.test(s[1]) && /PAPER/.test(s[1])));
-  assert.strictEqual(eng.accounts.get('a').openCount(), 1); assert.strictEqual(eng.accounts.get('b').openCount(), 1);
-  await eng.scanTick(); assert.strictEqual(picks.length, 2, 'scan interval respected');
+  assert.ok(/plan Sniper/.test(sent.find((s) => s[0] === 2)[1]));
+  await eng.scanTick(); assert.strictEqual(picks.length, 2, 'each plan scan interval respected');
 });
 
 test('a user who pauses keeps being monitored until flat; panic closes their trades', async () => {
-  const u = { id: 'a', mode: 'medium', chat: 1 };
+  const u = { id: 'a', chat: 1 };
   const { eng, sent, price } = mkEngine([u]);
   await eng.sync(); await eng.scanTick();
   assert.strictEqual(eng.accounts.get('a').openCount(), 1);

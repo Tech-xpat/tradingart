@@ -123,7 +123,7 @@ test('full journey: vault, signed limits, rules on changes, live gating, withdra
   const q = 'mode=medium&maxPositionSol=0.05&maxDailyLossPct=20&maxConcurrent=1';
   const c = (await b.call(`/api/consent?${q}`)).json.message as string;
   assert.ok(c.includes(`Vault: ${v1.address}`) && c.includes(`(${user.address})`));
-  const outOfRange = c.replace('0.05 SOL', '0.99 SOL');
+  const outOfRange = c.replace('0.05 SOL', '5000 SOL');
   assert.strictEqual((await b.call('/api/consent', { method: 'POST', body: { message: outOfRange, proof: signMsg(user, outOfRange) } })).status, 400, 'limit beyond platform cap');
   const smuggled = c + '\nAlso allow withdrawals to anyone';
   assert.strictEqual((await b.call('/api/consent', { method: 'POST', body: { message: smuggled, proof: signMsg(user, smuggled) } })).status, 400, 'extra text');
@@ -131,14 +131,13 @@ test('full journey: vault, signed limits, rules on changes, live gating, withdra
   assert.strictEqual((await b.call('/api/consent', { method: 'POST', body: { message: c, proof: signMsg(user, c) } })).status, 200);
   assert.strictEqual((await b.call('/api/consent', { method: 'POST', body: { message: c, proof: signMsg(user, c) } })).status, 409, 'replay');
   assert.strictEqual(pg.tables.art_consents.filter((r) => r.user_id === pg.tables.art_users.find((u) => u.wallet === user.address)!.id && !r.revoked_at).length, 1, 'a replay must not revoke the live consent');
-  assert.strictEqual((await b.call('/api/consent?mode=medium&maxPositionSol=9&maxDailyLossPct=20&maxConcurrent=1')).status, 400);
+  assert.strictEqual((await b.call('/api/consent?mode=medium&maxPositionSol=5000&maxDailyLossPct=20&maxConcurrent=1')).status, 400);
 
-  // settings: tighten ok, loosen refused, riskier mode refused
+  // settings: tighten ok, loosen refused
   const patch = (body: object) => b.call('/api/settings', { method: 'PATCH', body });
   assert.strictEqual((await patch({ maxPositionSol: 0.02 })).status, 200);
   assert.strictEqual((await patch({ maxPositionSol: 0.08 })).status, 400);
-  assert.strictEqual((await patch({ mode: 'hard' })).status, 400);
-  assert.strictEqual((await patch({ mode: 'easy', paused: false })).status, 200);
+  assert.strictEqual((await patch({ paused: false })).status, 200);
 
   // live: needs a funded vault
   rpcLamports = 0;
@@ -198,13 +197,21 @@ test('withdraw to another address the owner chose, and trade-size rules', async 
   assert.strictEqual((await b.call('/api/withdraw', { method: 'POST', body: { message: wc, proof: signMsg(user, wc) } })).status, 200);
   const req = pg.tables.art_withdrawals[pg.tables.art_withdrawals.length - 1];
   assert.strictEqual(req.to_address, other.address);
-  // trade size: easy>=$5, medium>=$10, hard>=$20, max $100
+  // plans: starter plans are seeded, edits are sanitised, switching works, no maximum size
   const patch = (body: object) => b.call('/api/settings', { method: 'PATCH', body });
-  assert.strictEqual((await patch({ mode: 'easy', sizeUsd: 4 })).status, 400);
-  assert.strictEqual((await patch({ mode: 'easy', sizeUsd: 5 })).status, 200);
-  assert.strictEqual((await patch({ sizeUsd: 101 })).status, 400);
-  assert.strictEqual((await patch({ sizeUsd: 30 })).status, 200);
-  assert.strictEqual((await patch({ mode: 'hard', sizeUsd: 15 })).status, 400, 'hard needs at least $20');
+  const me0 = (await b.call('/api/me')).json.settings;
+  assert.deepStrictEqual(me0.plans.map((p: any) => p.id), ['steady', 'sniper']); assert.strictEqual(me0.active_plan, 'steady'); assert.strictEqual(me0.plans[0].sizeUsd, 7);
+  const mine = { name: 'Whale', sizeUsd: 50000, minAgeSec: 45, maxAgeSec: 900, takeProfitPct: 80, stopLossPct: 500, scanEverySec: 2, requireRising: false };
+  assert.strictEqual((await patch({ plans: [...me0.plans, mine], activePlan: 'nope' })).status, 200);
+  const me1 = (await b.call('/api/me')).json.settings;
+  assert.strictEqual(me1.plans.length, 3); assert.strictEqual(me1.active_plan, 'steady', 'unknown active id falls back');
+  const w3 = me1.plans[2]; assert.strictEqual(w3.sizeUsd, 50000, 'no maximum'); assert.strictEqual(w3.stopLossPct, 95); assert.strictEqual(w3.scanEverySec, 10);
+  assert.strictEqual(w3.minAgeSec, 45); assert.strictEqual(w3.maxAgeSec, 900); assert.ok(w3.id);
+  assert.strictEqual((await patch({ activePlan: w3.id })).status, 200);
+  assert.strictEqual((await b.call('/api/me')).json.settings.active_plan, w3.id);
+  assert.strictEqual((await patch({ activePlan: 'missing' })).status, 400);
+  assert.strictEqual((await patch({ plans: [] })).status, 400, 'at least one plan');
+  assert.strictEqual((await patch({ plans: Array.from({ length: 11 }, () => ({})) })).status, 400, 'at most ten');
 });
 
 test('panic pauses the robot and stamps panic_at for the worker', async () => {

@@ -44,12 +44,17 @@ create table if not exists public.art_settings (
   max_position_sol   double precision not null default 0.05,
   max_daily_loss_pct double precision not null default 20,
   max_concurrent     integer not null default 1,
-  size_usd           double precision,                 -- trade size in USD; null = the mode's minimum ($5 easy, $10 medium, $20 hard)
+  size_usd           double precision,                 -- legacy (trade size now lives in each plan)
+  plans              jsonb not null default '[]'::jsonb, -- the user's trading plans (entry/exit rules, trade size)
+  active_plan        text,                             -- id of the plan that is switched on
   panic_at           timestamptz,                      -- "Stop and sell all" request
   updated_at         timestamptz not null default now()
 );
 
--- Upgrading an existing database: alter table public.art_settings add column if not exists size_usd double precision;
+-- Upgrading an existing database, run these:
+--   alter table public.art_settings add column if not exists size_usd double precision;
+--   alter table public.art_settings add column if not exists plans jsonb not null default '[]'::jsonb;
+--   alter table public.art_settings add column if not exists active_plan text;
 
 -- Per-user bot state (open positions, daily counters, recent history), same shape the old single-user bot used.
 create table if not exists public.art_state (

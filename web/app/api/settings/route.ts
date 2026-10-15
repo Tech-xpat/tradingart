@@ -1,7 +1,8 @@
 import { authed, json, fail } from '@/lib/api';
 import { db, must } from '@/lib/db';
-import { env, LIMITS, MIN_SIZE_USD, MODES, modeRank } from '@/lib/env';
+import { env, LIMITS } from '@/lib/env';
 import { solBalance } from '@/lib/chain';
+import { sanitizePlan, MAX_PLANS } from '@/lib/planrules';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -10,8 +11,8 @@ const num = (v: unknown) => (v === undefined ? undefined : Number(v));
 
 /**
  * Change robot settings. Rules, enforced here AND again by the worker:
- *  - limits can only be tightened below what the user signed (a looser limit needs a new signature)
- *  - a harder mode than the signed one needs a new signature
+ *  - safety limits can only be tightened below what the user signed (a looser limit needs a new signature)
+ *  - plans (entry/exit rules, trade size) are the user's own and need no signature: spending is still capped by the signed limits
  *  - LIVE needs: live switch on, a vault, a signed consent and a funded vault
  */
 export const PATCH = authed({ write: true, limit: [40, 60_000] }, async ({ req, session }) => {
@@ -23,11 +24,6 @@ export const PATCH = authed({ write: true, limit: [40, 60_000] }, async ({ req, 
   const consent = consentRow?.limits as { mode: string; maxPositionSol: number; maxDailyLossPct: number; maxConcurrent: number } | undefined;
 
   const patch: Record<string, unknown> = {};
-  if (b.mode !== undefined) {
-    if (!(MODES as readonly string[]).includes(b.mode)) return fail('bad mode');
-    if (consent && modeRank(b.mode) > modeRank(consent.mode)) return fail('That mode is riskier than the one you signed. Sign a new consent to use it.');
-    patch.mode = b.mode;
-  }
   const lim = (key: string, col: string, r: { min: number; max: number }, signed?: number) => {
     const v = num(b[key]); if (v === undefined) return null;
     if (!Number.isFinite(v) || v < r.min || v > r.max) return `${key} out of range`;
@@ -38,15 +34,27 @@ export const PATCH = authed({ write: true, limit: [40, 60_000] }, async ({ req, 
     || lim('maxDailyLossPct', 'max_daily_loss_pct', LIMITS.maxDailyLossPct, consent?.maxDailyLossPct)
     || lim('maxConcurrent', 'max_concurrent', LIMITS.maxConcurrent, consent?.maxConcurrent);
   if (err) return fail(err);
-  // trade size in USD: never below the minimum of the (new) mode. Spending is still capped by the signed max-per-trade in SOL.
-  const mode = (patch.mode ?? cur.mode) as keyof typeof MIN_SIZE_USD;
-  const minUsd = MIN_SIZE_USD[mode];
-  if (b.sizeUsd !== undefined) {
-    const v = Number(b.sizeUsd);
-    if (!Number.isFinite(v) || v < minUsd || v > LIMITS.maxSizeUsd) return fail(`Trade size must be between $${minUsd} and $${LIMITS.maxSizeUsd} in ${mode} mode.`);
-    patch.size_usd = Math.round(v * 100) / 100;
-  } else if (patch.mode && cur.size_usd != null && Number(cur.size_usd) < minUsd) patch.size_usd = null;
   if (b.paused !== undefined) patch.paused = !!b.paused;
+
+  // plans: the whole list is replaced; every plan is sanitised; ids are kept or minted
+  if (b.plans !== undefined) {
+    if (!Array.isArray(b.plans) || b.plans.length < 1 || b.plans.length > MAX_PLANS) return fail(`Keep between 1 and ${MAX_PLANS} plans.`);
+    const seen = new Set<string>();
+    const plans = b.plans.map((p: any, i: number) => {
+      const clean = sanitizePlan(p && typeof p === 'object' ? p : {});
+      let id = String(clean.id || '').replace(/[^a-z0-9_-]/gi, '').slice(0, 24) || `p${Date.now().toString(36)}${i}`;
+      while (seen.has(id)) id = `${id}x`;
+      seen.add(id);
+      return { ...clean, id };
+    });
+    patch.plans = plans;
+    const wanted = String(b.activePlan ?? cur.active_plan ?? '');
+    patch.active_plan = plans.some((p: any) => p.id === wanted) ? wanted : plans[0].id;
+  } else if (b.activePlan !== undefined) {
+    const list = Array.isArray(cur.plans) ? cur.plans : [];
+    if (!list.some((p: any) => p.id === b.activePlan)) return fail('unknown plan');
+    patch.active_plan = String(b.activePlan);
+  }
 
   if (b.live !== undefined) {
     if (b.live) {

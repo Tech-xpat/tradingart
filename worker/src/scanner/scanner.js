@@ -1,25 +1,15 @@
 /**
- * Token scanner, run once per MODE (not once per user): the best candidate is then offered to every
- * active account in that mode, each of which applies its own limits.
+ * Token scanner. Candidates come from a shared pool (DexScreener feeds + the live new-token stream); each
+ * account then applies ITS plan: age window (in seconds), liquidity/volume/buy bars, momentum rule.
  */
 const logger = require('../utils/logger');
 const market = require('../analysis/dexscreener');
+const stream = require('./stream');
 const config = require('../config');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-// SCAN_RELAXED=true loosens the filters so paper mode finds trades faster while testing.
-// It is ignored whenever live trading is enabled, so real money is never traded on looser rules.
-const relaxed = () => config.SCAN_RELAXED && !config.LIVE_TRADING_ENABLED;
-const MIN_AGE_DAYS = 10;
-const minAge = () => (relaxed() ? 1 : MIN_AGE_DAYS);
 const SEEN_TTL_MS = 6 * 60 * 60 * 1000;
-const seenByMode = { easy: new Map(), medium: new Map(), hard: new Map() };
-
-const BARS = {
-  easy:   { minLiq: 8000,  minVol1h: 1500, minBuys1h: 5 },
-  medium: { minLiq: 15000, minVol1h: 4000, minBuys1h: 12 },
-  hard:   { minLiq: 30000, minVol1h: 8000, minBuys1h: 20 },
-};
+const seenBy = new Map(); // key (user) -> Map(mint -> ts)
 
 let solPrice = { v: 180, ts: 0 };
 async function fetchSolPriceUsd() {
@@ -46,7 +36,9 @@ async function getJson(url) {
   }
 }
 
-async function fetchCandidates() {
+let poolCache = { at: 0, mints: [] };
+async function feedCandidates() {
+  if (Date.now() - poolCache.at < 25000) return poolCache.mints;
   const mints = new Set();
   for (const url of ['https://api.dexscreener.com/token-boosts/latest/v1', 'https://api.dexscreener.com/token-profiles/latest/v1']) {
     const arr = await getJson(url);
@@ -54,57 +46,68 @@ async function fetchCandidates() {
   }
   const s = await getJson('https://api.dexscreener.com/latest/dex/search?q=solana');
   for (const p of (s && s.pairs) || []) if (p.chainId === 'solana' && p.baseToken?.address) mints.add(p.baseToken.address);
-  return [...mints].slice(0, 50);
+  poolCache = { at: Date.now(), mints: [...mints].slice(0, 50) };
+  return poolCache.mints;
 }
 
-function scoreChart(mkt, mode) {
+/** Score one market snapshot against ONE plan. -Infinity = does not qualify. */
+function scoreChart(mkt, plan) {
   if (!mkt || !(mkt.priceNative > 0)) return -Infinity;
-  const ageDays = mkt.ageDays || 0;
-  if (ageDays < minAge()) return -Infinity;
+  const ageSec = mkt.ageSec != null ? mkt.ageSec : (mkt.ageDays || 0) * 86400;
+  if (!(mkt.pairCreatedAt > 0 || ageSec > 0)) return -Infinity; // unknown age can't satisfy an age window
+  if (ageSec < plan.minAgeSec) return -Infinity;
+  if (plan.maxAgeSec != null && ageSec > plan.maxAgeSec) return -Infinity;
   const liq = mkt.liquidityUsd || 0, vol1h = mkt.volume1h || 0, vol6h = mkt.volume6h || 0;
   const ch5 = mkt.priceChange5m || 0, ch1h = mkt.priceChange1h || 0, ch6h = mkt.priceChange6h || 0, ch24h = mkt.priceChange24h || 0;
   const buys1h = mkt.buys1h || 0, sells1h = mkt.sells1h || 0;
-  if (!relaxed() && !(ch1h > 0 || ch6h > 2)) return -Infinity;
+  if (plan.requireRising && !(ch1h > 0 || ch6h > 2)) return -Infinity;
   if (ch5 < -12 || ch24h < -40) return -Infinity;
-  const b0 = BARS[mode] || BARS.medium;
-  const k = relaxed() ? 0.4 : 1;
-  const b = { minLiq: b0.minLiq * k, minVol1h: b0.minVol1h * k, minBuys1h: Math.ceil(b0.minBuys1h * k) };
-  if (liq < b.minLiq) return -Infinity;
-  if (vol1h < b.minVol1h && vol6h < b.minVol1h * 3) return -Infinity;
-  if (buys1h < b.minBuys1h) return -Infinity;
+  if (liq < plan.minLiqUsd) return -Infinity;
+  if (vol1h < plan.minVol1hUsd && vol6h < plan.minVol1hUsd * 3) return -Infinity;
+  if (buys1h < plan.minBuys1h) return -Infinity;
   const buyPressure = sells1h > 0 ? buys1h / sells1h : buys1h > 0 ? 2 : 0;
   if (buyPressure < 0.7) return -Infinity;
   let score = 0;
   score += Math.min(ch5, 25) * 1.5; score += Math.min(ch1h, 40) * 2; score += Math.min(ch6h, 60);
   score += Math.log10(Math.max(liq, 1)) * 10; score += Math.log10(Math.max(vol1h, 1)) * 6;
-  score += Math.min(buyPressure, 3) * 8; score += Math.min(ageDays, 60) * 0.3;
+  score += Math.min(buyPressure, 3) * 8; score += Math.min(ageSec / 86400, 60) * 0.3;
   return score;
 }
 
-async function pickOne(mode) {
-  const seen = seenByMode[mode] || seenByMode.medium;
+async function pickOne(plan, key = 'default') {
+  let seen = seenBy.get(key); if (!seen) { seen = new Map(); seenBy.set(key, seen); }
   const now = Date.now();
   for (const [m, ts] of seen) if (now - ts > SEEN_TTL_MS) seen.delete(m);
-  const candidates = await fetchCandidates();
-  if (!candidates.length) { logger.info(`scanner[${mode}]: no candidates this cycle`); return null; }
+  // young coins first (they are only in the window briefly), then the general feeds
+  const mints = new Set(stream.recent(plan.minAgeSec, plan.maxAgeSec, 40));
+  for (const m of await feedCandidates()) mints.add(m);
+  const candidates = [...mints];
+  if (!candidates.length) { logger.info(`scanner[${plan.name}]: no candidates this cycle`); return null; }
   const scored = [];
   for (const mint of candidates) {
     if (seen.has(mint) || config.IGNORE_MINTS.includes(mint)) continue;
     try {
       const mkt = await market.getTokenMarket(mint);
       if (!mkt) continue;
-      const s = scoreChart(mkt, mode);
-      if (s > -Infinity) scored.push({ mint, mkt, score: s });
+      const sc = scoreChart(mkt, plan);
+      if (sc > -Infinity) scored.push({ mint, mkt, score: sc });
     } catch (_) {}
-    await sleep(120);
+    await sleep(60);
   }
   scored.sort((a, b) => b.score - a.score);
-  if (!scored.length) { logger.info(`scanner[${mode}]: ${candidates.length} candidates, none passed (age>=${minAge()}d${relaxed() ? ', RELAXED test filters' : ' + rising'})`); return null; }
+  if (!scored.length) { logger.info(`scanner[${plan.name}]: ${candidates.length} candidates, none passed (age ${fmtAge(plan.minAgeSec)}–${plan.maxAgeSec == null ? 'any' : fmtAge(plan.maxAgeSec)}${plan.requireRising ? ', rising' : ''})`); return null; }
   const top = scored.slice(0, 5);
   const pick = top[Math.floor(Math.random() * top.length)];
   seen.set(pick.mint, Date.now());
-  logger.info(`scanner[${mode}] pick ${pick.mint.slice(0, 8)}… score=${pick.score.toFixed(1)} liq=$${Math.round(pick.mkt.liquidityUsd)}`);
+  logger.info(`scanner[${plan.name}] pick ${pick.mint.slice(0, 8)}… score=${pick.score.toFixed(1)} liq=$${Math.round(pick.mkt.liquidityUsd)}`);
   return pick;
 }
 
-module.exports = { pickOne, scoreChart, fetchSolPriceUsd, MIN_AGE_DAYS };
+function fmtAge(sec) {
+  if (sec >= 86400) return `${+(sec / 86400).toFixed(1)}d`;
+  if (sec >= 3600) return `${+(sec / 3600).toFixed(1)}h`;
+  if (sec >= 60) return `${+(sec / 60).toFixed(1)}m`;
+  return `${sec}s`;
+}
+
+module.exports = { pickOne, scoreChart, fetchSolPriceUsd, fmtAge };

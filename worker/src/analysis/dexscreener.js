@@ -33,6 +33,7 @@ async function fetchMarket(mint) {
     priceChange6h: Number(best.priceChange?.h6 || 0) || 0,
     priceChange24h: Number(best.priceChange?.h24 || 0) || 0,
     pairCreatedAt: createdAt,
+    ageSec: createdAt > 0 ? Math.max(0, (Date.now() - createdAt) / 1000) : 0,
     ageDays: createdAt > 0 ? (Date.now() - createdAt) / 86400000 : 0,
     buys1h: Number(tx.buys || 0) || 0,
     sells1h: Number(tx.sells || 0) || 0,

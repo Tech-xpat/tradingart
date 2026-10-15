@@ -16,15 +16,14 @@ export const env = {
 };
 
 export const LIMITS = {
-  maxPositionSol: { min: 0.005, max: 0.25 },
+  // Safety limits the user signs. Trade SIZE in USD is a plan setting with no maximum (the signed max per trade in SOL still caps spending).
+  maxPositionSol: { min: 0.005, max: 1000 },
   maxDailyLossPct: { min: 1, max: 50 },
-  maxConcurrent: { min: 1, max: 3 },
+  maxConcurrent: { min: 1, max: 10 },
   minVaultSolForLive: 0.05,
-  maxSizeUsd: 100,
-  minSizeUsd: { easy: 5, medium: 10, hard: 20 },
+  minSizeUsd: 1,
+  defaultSizeUsd: 7,
 };
-// Minimum trade size per mode, in USD. The user may raise it up to maxSizeUsd. The worker enforces the same numbers (CAP_MAX_SIZE_USD).
-export const MIN_SIZE_USD = { easy: 5, medium: 10, hard: 20 } as const;
-export const MODES = ['easy', 'medium', 'hard'] as const;
+// 'custom' is what new consents carry now (trading rules live in plans). The old three names stay valid for consents signed earlier.
+export const MODES = ['custom', 'easy', 'medium', 'hard'] as const;
 export type Mode = (typeof MODES)[number];
-export const modeRank = (m: string) => MODES.indexOf(m as Mode);

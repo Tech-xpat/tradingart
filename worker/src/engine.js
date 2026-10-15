@@ -1,10 +1,8 @@
 /**
- * The engine: keeps one Account per active user, runs the scanner once per mode, fans each pick out to
- * every account in that mode (each applies its own limits), monitors open trades, runs withdrawals.
+ * The engine: keeps one Account per active user, scans per account on that account's plan, monitors open trades, runs withdrawals.
  */
 const config = require('./config');
 const logger = require('./utils/logger');
-const { PRESETS } = require('./plans');
 const { Account } = require('./trading/account');
 const { processWithdrawal } = require('./trading/withdraw');
 const { Keypair } = require('@solana/web3.js');
@@ -14,7 +12,6 @@ class Engine {
   constructor(o) {
     this.db = o.db; this.deps = o.deps; this.unsealSecret = o.unsealSecret; this.send = o.send || (() => {}); this.adminNotify = o.adminNotify || (() => {});
     this.accounts = new Map();
-    this.nextScan = { easy: 0, medium: 0, hard: 0 };
     this.timers = [];
     this.scanning = false; this.syncing = false; this.monitoring = false; this.withdrawing = false;
   }
@@ -55,26 +52,24 @@ class Engine {
     } catch (e) { logger.error('sync:', e.message); } finally { this.syncing = false; }
   }
 
-  modeAccounts(mode) { return [...this.accounts.values()].filter((a) => !a.paused && a.plan.riskProfile === mode); }
+  activeAccounts() { return [...this.accounts.values()].filter((a) => !a.paused); }
 
+  /** Each running account scans on ITS plan's schedule and applies ITS plan's filters. */
   async scanTick() {
     if (this.scanning) return;
     this.scanning = true;
     try {
-      for (const mode of Object.keys(PRESETS)) {
-        const accts = this.modeAccounts(mode);
-        if (!accts.length || Date.now() < this.nextScan[mode]) continue;
-        this.nextScan[mode] = Date.now() + PRESETS[mode].scanIntervalMin * 60 * 1000 - 2000;
-        const pick = await this.deps.scanner.pickOne(mode);
+      for (const a of this.activeAccounts()) {
+        if (Date.now() < (a.nextScanAt || 0)) continue;
+        a.nextScanAt = Date.now() + a.plan.scanEverySec * 1000 - 500;
+        const pick = await this.deps.scanner.pickOne(a.plan, a.userId);
         if (!pick) continue;
         const why = `scanner:${pick.score.toFixed(0)}`;
-        for (const a of accts) {
-          const res = await a.offer(pick.mint, why);
-          if (res.ok) {
-            const p = res.pos;
-            a.notify(`🟢 ENTERED ${pick.mint.slice(0, 6)}…${pick.mint.slice(-4)} · ${p.dryRun ? 'PAPER' : 'LIVE'}\n${why} · mode ${a.plan.riskProfile}\nin: ${p.sizeSol.toFixed(4)} SOL → ${(Number(p.tokenRaw) / 10 ** p.decimals).toFixed(2)} tokens (${p.fillSource})\nTP +${p.takeProfitPct}% · SL −${p.stopLossPct}% · max hold ${p.maxHoldMin}m${p.buySig ? `\nhttps://solscan.io/tx/${p.buySig}` : ''}`);
-          } else if (res.why && !/^(busy|paused|max concurrent|max trades)/.test(res.why)) logger.info(`[${a.tag}] skip ${pick.mint.slice(0, 8)}…: ${res.why}`);
-        }
+        const res = await a.offer(pick.mint, why);
+        if (res.ok) {
+          const p = res.pos;
+          a.notify(`🟢 ENTERED ${pick.mint.slice(0, 6)}…${pick.mint.slice(-4)} · ${p.dryRun ? 'PAPER' : 'LIVE'}\n${why} · plan ${a.plan.name}\nin: ${p.sizeSol.toFixed(4)} SOL → ${(Number(p.tokenRaw) / 10 ** p.decimals).toFixed(2)} tokens (${p.fillSource})\nTP +${p.takeProfitPct}% · SL −${p.stopLossPct}% · max hold ${p.maxHoldMin}m${p.buySig ? `\nhttps://solscan.io/tx/${p.buySig}` : ''}`);
+        } else if (res.why && !/^(busy|paused|max concurrent|max trades)/.test(res.why)) logger.info(`[${a.tag}] skip ${pick.mint.slice(0, 8)}…: ${res.why}`);
       }
     } catch (e) { logger.error('scanTick:', e.message); } finally { this.scanning = false; }
   }
@@ -120,7 +115,7 @@ class Engine {
     try { for (const r of await this.db.stuckWithdrawals()) await this.db.finishWithdrawal(r.id, { status: 'failed', error: 'worker restarted mid-send; check your wallet and vault balance before requesting again' }); } catch (e) { logger.warn('stuck withdrawals:', e.message); }
     await this.sync();
     this.timers.push(setInterval(() => this.sync(), config.SYNC_MS));
-    this.timers.push(setInterval(() => this.scanTick(), 15000));
+    this.timers.push(setInterval(() => this.scanTick(), 5000));
     this.timers.push(setInterval(() => this.monitorTick(), config.PRICE_POLL_MS));
     this.timers.push(setInterval(() => this.withdrawTick(), config.WITHDRAW_POLL_MS));
     logger.info(`engine started: ${this.accounts.size} active account(s), live trading ${config.LIVE_TRADING_ENABLED ? 'ENABLED' : 'disabled (everyone is paper)'}`);

@@ -19,6 +19,10 @@ test('lib/seal, lib/verify and lib/messages are byte-identical to the worker cop
   }
 });
 
+test('lib/planrules is byte-identical to the worker copy', () => {
+  assert.strictEqual(readFileSync(join(__dirname, '../lib/planrules.js'), 'utf8'), readFileSync(join(__dirname, '../../worker/src/planrules.js'), 'utf8'));
+});
+
 test('nonce binds to purpose and wallet and expires', () => {
   const { nonce } = makeNonce('signin', 'WalletA');
   assert.ok(checkNonce('signin', 'WalletA', nonce));
@@ -32,7 +36,8 @@ test('nonce binds to purpose and wallet and expires', () => {
 
 test('limits validation rejects out-of-range and bad modes', () => {
   assert.ok(parseLimits({ mode: 'easy', maxPositionSol: 0.05, maxDailyLossPct: 20, maxConcurrent: 1 }));
-  assert.strictEqual(parseLimits({ mode: 'easy', maxPositionSol: 5, maxDailyLossPct: 20, maxConcurrent: 1 }), null);
+  assert.ok(parseLimits({ mode: 'custom', maxPositionSol: 12, maxDailyLossPct: 20, maxConcurrent: 4 }), 'custom mode, bigger sizes allowed');
+  assert.strictEqual(parseLimits({ mode: 'easy', maxPositionSol: 5000, maxDailyLossPct: 20, maxConcurrent: 1 }), null);
   assert.strictEqual(parseLimits({ mode: 'easy', maxPositionSol: 0.05, maxDailyLossPct: 99, maxConcurrent: 1 }), null);
   assert.strictEqual(parseLimits({ mode: 'easy', maxPositionSol: 0.05, maxDailyLossPct: 20, maxConcurrent: 1.5 }), null);
   assert.strictEqual(parseLimits({ mode: 'yolo', maxPositionSol: 0.05, maxDailyLossPct: 20, maxConcurrent: 1 }), null);

@@ -64,7 +64,7 @@ button { cursor: pointer; border: 0; background: none; }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--up); animation: ping 1.8s infinite; }
 @keyframes ping { 0% { box-shadow: 0 0 0 0 rgba(93, 240, 138, .7); } 70%, 100% { box-shadow: 0 0 0 10px rgba(93, 240, 138, 0); } }
 h1 { margin: 22px 0; text-wrap: balance; }
-h1 .l1 { display: block; font: italic 700 clamp(36px, 5.6vw, 74px)/1 var(--tech); letter-spacing: -.01em; text-transform: uppercase; transform: skewX(-6deg); transform-origin: left bottom; text-shadow: 0 0 28px rgba(198, 255, 61, .22); }
+h1 .l1 { display: block; font: normal 700 clamp(36px, 5.6vw, 74px)/1 var(--tech); letter-spacing: -.01em; text-transform: uppercase; text-shadow: 0 0 28px rgba(198, 255, 61, .22); }
 h1 .l2 { display: block; font: italic 400 clamp(40px, 6.1vw, 80px)/1.1 var(--italic); font-variation-settings: "opsz" 144; letter-spacing: -.025em; padding-bottom: .08em;
   background: linear-gradient(100deg, #c6ff3d 0%, #f6ffd0 46%, #ffd23f 100%); background-size: 200% auto; -webkit-background-clip: text; background-clip: text; color: transparent; }
 .sub { color: var(--muted); font-size: clamp(16px, 1.6vw, 18px); max-width: 520px; margin: 0 0 28px; }
@@ -168,7 +168,7 @@ h2 em { font: italic 400 1em/1 var(--italic); letter-spacing: -.02em; color: var
 .callout b { color: #ffe68a; }
 @media (max-width: 760px) { .prow { grid-template-columns: 40px minmax(0, 1fr); } .prow span:last-child { grid-column: 2; } }
 .brand { text-decoration: none; }
-.nav .brand, footer .brand { font-family: var(--tech); font-style: italic; letter-spacing: .08em; }
+.nav .brand, footer .brand { font-family: var(--tech); font-style: normal; letter-spacing: .08em; }
 
 /* page-wide 3D environment */
 .env { position: fixed; inset: 0; z-index: -1; pointer-events: none; overflow: hidden; }

@@ -20,13 +20,14 @@ async function main() {
     fills: require('./src/solana/fills'),
     scanner: require('./src/scanner/scanner'),
   };
+  require('./src/scanner/stream').start();
   const engine = new Engine({ db, deps, unsealSecret: (sealed) => unsealSecret(sealed, config.VAULT_SEAL_SECRET) });
   const tg = telegram.start(engine);
   engine.send = tg.send; engine.adminNotify = tg.adminNotify;
   await engine.start();
   tg.adminNotify(`ART worker v${config.VERSION} started · live ${config.LIVE_TRADING_ENABLED ? 'ON' : 'off (paper only)'} · ${engine.accounts.size} active account(s)`);
 
-  const stop = async (sig) => { logger.info(`${sig}: stopping`); await engine.stop(); if (tg.stop) tg.stop(); process.exit(0); };
+  const stop = async (sig) => { logger.info(`${sig}: stopping`); require('./src/scanner/stream').stop(); await engine.stop(); if (tg.stop) tg.stop(); process.exit(0); };
   process.on('SIGTERM', () => stop('SIGTERM'));
   process.on('SIGINT', () => stop('SIGINT'));
 }

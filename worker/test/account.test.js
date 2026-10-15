@@ -30,7 +30,8 @@ test('a user can only tighten limits, never loosen them past consent or platform
   const p = effectivePlan(settings({ mode: 'hard', max_position_sol: 5, max_daily_loss_pct: 90, max_concurrent: 9 }), { maxPositionSol: 0.1, maxDailyLossPct: 15, maxConcurrent: 2 });
   assert.strictEqual(p.maxPositionSol, 0.1); assert.strictEqual(p.maxDailyLossPct, 15); assert.strictEqual(p.maxConcurrent, 2);
   const q = effectivePlan(settings({ mode: 'hard', max_position_sol: 5, max_daily_loss_pct: 90, max_concurrent: 9 }), null);
-  assert.ok(q.maxPositionSol <= config.CAP_MAX_POSITION_SOL && q.maxDailyLossPct <= config.CAP_MAX_DAILY_LOSS_PCT && q.maxConcurrent <= config.CAP_MAX_CONCURRENT);
+  assert.ok(q.maxDailyLossPct <= config.CAP_MAX_DAILY_LOSS_PCT && q.maxConcurrent <= config.CAP_MAX_CONCURRENT);
+  assert.strictEqual(q.maxPositionSol, 5, 'no platform cap by default: the user setting stands');
 });
 
 test('live is impossible while the platform switch is off, even if the user chose live and has a vault + consent', () => {
