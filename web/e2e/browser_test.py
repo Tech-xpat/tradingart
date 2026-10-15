@@ -131,8 +131,9 @@ async def main():
             await pg.screenshot(path=f"{OUT}/{name}_6_final.png", full_page=True)
             # --- leaderboard: opt in for real, then browse a mocked board + profile, copy plan ---
             await pg.get_by_label("Leaderboard handle").fill("Coach_" + name + os.urandom(2).hex())
+            assert await pg.get_by_role("button", name="Hide me from the leaderboard").count() == 1, "listed by default"
+            await pg.get_by_role("button", name="Hide me from the leaderboard").click(); await pg.wait_for_selector("text=You are hidden from the leaderboard", timeout=8000)
             await pg.get_by_role("button", name="Show me on the leaderboard").click(); await pg.wait_for_selector("text=You are on the leaderboard", timeout=8000)
-            assert await pg.get_by_role("button", name="Hide me from the leaderboard").count() == 1
             curve = [0, 0.01, 0.008, 0.03, 0.05]
             async def board(route):
                 await route.fulfill(status=200, content_type="application/json", body=json.dumps({"mode": "live", "period": "7d", "board": [

@@ -48,7 +48,7 @@ create table if not exists public.art_settings (
   plans              jsonb not null default '[]'::jsonb, -- the user's trading plans (entry/exit rules, trade size)
   active_plan        text,                             -- id of the plan that is switched on
   panic_at           timestamptz,                      -- "Stop and sell all" request
-  public_profile     boolean not null default false,   -- opt-in: appear on the leaderboard (profit, trades and active plan become visible)
+  public_profile     boolean not null default true,    -- listed on the leaderboard by default (profit, trades and active plan are visible); the user can hide
   handle             text,                             -- public name on the leaderboard (never the wallet)
   follow_user_id     uuid references public.art_users(id) on delete set null, -- auto-copy: whose active plan this user mirrors
   updated_at         timestamptz not null default now()
@@ -58,7 +58,7 @@ create table if not exists public.art_settings (
 --   alter table public.art_settings add column if not exists size_usd double precision;
 --   alter table public.art_settings add column if not exists plans jsonb not null default '[]'::jsonb;
 --   alter table public.art_settings add column if not exists active_plan text;
---   alter table public.art_settings add column if not exists public_profile boolean not null default false;
+--   alter table public.art_settings add column if not exists public_profile boolean not null default true;
 --   alter table public.art_settings add column if not exists handle text;
 --   alter table public.art_settings add column if not exists follow_user_id uuid references public.art_users(id) on delete set null;
 --   create unique index if not exists art_settings_handle_uq on public.art_settings (lower(handle)) where handle is not null;

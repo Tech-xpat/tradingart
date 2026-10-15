@@ -214,7 +214,7 @@ test('withdraw to another address the owner chose, and trade-size rules', async 
   assert.strictEqual((await patch({ plans: Array.from({ length: 11 }, () => ({})) })).status, 400, 'at most ten');
 });
 
-test('leaderboard: opt-in only, ranked profit, profile, copy plan, auto-copy follows the leader', async () => {
+test('leaderboard: everyone listed by default, ranked profit, profile, copy plan, auto-copy follows the leader', async () => {
   const A = new Browser(), B = new Browser(), wa = mkWallet(), wb = mkWallet();
   await A.signIn(wa); await B.signIn(wb);
   const meA = (await A.call('/api/me')).json, meB = (await B.call('/api/me')).json;
@@ -223,12 +223,13 @@ test('leaderboard: opt-in only, ranked profit, profile, copy plan, auto-copy fol
   const now = Date.now();
   pg.tables.art_trades = [row({ realized_sol: 0.02, created_at: new Date(now - 3600e3).toISOString(), pct: 40, exit_reason: 'take_profit' }), row({ realized_sol: -0.005, created_at: new Date(now - 1800e3).toISOString(), pct: -10, exit_reason: 'stop_loss' }), row({ paper: true, realized_sol: 9 })];
   pg.tables.art_state.push({ user_id: uidA, key: 'live:positions', value: [{ mint: 'OPENMINT1', openedAt: now - 20000, lastPnl: 12.5, trail: [[now - 8000, 1], [now - 4000, 12.5]], takeProfitPct: 50, stopLossPct: 25 }] });
-  // not public yet: nobody on the board, no profile
-  assert.deepStrictEqual((await B.call('/api/leaderboard?mode=live&period=all')).json.board, []);
+  // everyone is public by default with an auto handle (never the wallet); a trader with no trades is not ranked
+  assert.strictEqual(meA.settings.public_profile, true); assert.match(meA.settings.handle, /^trader_[a-z0-9]+$/); assert.ok(!meA.settings.handle.includes(wa.address));
+  const first = (await B.call('/api/leaderboard?mode=live&period=all')).json.board;
+  assert.strictEqual(first.length, 1, 'listed without doing anything'); assert.strictEqual(first[0].handle, meA.settings.handle);
   assert.strictEqual((await B.call('/api/profile?handle=alpha')).status, 404);
   // opting in needs a valid, unique handle
   const patchA = (body: any) => A.call('/api/settings', { method: 'PATCH', body });
-  assert.strictEqual((await patchA({ publicProfile: true })).status, 400, 'handle required');
   assert.strictEqual((await patchA({ handle: 'a b', publicProfile: true })).status, 400, 'bad handle');
   assert.strictEqual((await patchA({ handle: 'Alpha', publicProfile: true })).status, 200);
   assert.strictEqual((await B.call('/api/settings', { method: 'PATCH', body: { handle: 'alpha', publicProfile: true } })).status, 400, 'handle taken');

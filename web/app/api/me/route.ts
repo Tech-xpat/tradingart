@@ -4,6 +4,7 @@ import { env, LIMITS } from '@/lib/env';
 import { solBalance } from '@/lib/chain';
 import { solUsd } from '@/lib/price';
 import { defaultPlans } from '@/lib/planrules';
+import { ensureHandle } from '@/lib/copy';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -24,6 +25,11 @@ export const GET = authed({ limit: [90, 60_000] }, async ({ session }) => {
     const plans = defaultPlans();
     await sb.from('art_settings').update({ plans, active_plan: plans[0].id, updated_at: new Date().toISOString() }).eq('user_id', session.userId);
     settingsRow = { ...settingsRow, plans, active_plan: plans[0].id };
+  }
+  // everyone is on the leaderboard by default, so everyone needs a public handle (never the wallet)
+  if (settingsRow.public_profile !== false && !settingsRow.handle) {
+    const h = await ensureHandle(sb, session.userId, session.wallet);
+    if (h) settingsRow = { ...settingsRow, handle: h, public_profile: true };
   }
   return json({
     wallet: session.wallet,

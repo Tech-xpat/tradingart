@@ -39,3 +39,16 @@ export async function propagate(sb: SupabaseClient, leaderId: string) {
   }
   return n;
 }
+
+/** Everyone is listed by default, so every account needs a public handle. Mint a friendly unique one the first time it is missing. */
+export async function ensureHandle(sb: SupabaseClient, userId: string, wallet: string): Promise<string | null> {
+  const base = `trader_${wallet.slice(0, 4).toLowerCase().replace(/[^a-z0-9]/g, 'x')}`;
+  for (let i = 0; i < 6; i++) {
+    const h = `${base}${Math.random().toString(36).slice(2, 6)}`;
+    const { data } = await sb.from('art_settings').select('user_id').eq('handle', h).maybeSingle();
+    if (data) continue;
+    const { error } = await sb.from('art_settings').update({ handle: h }).eq('user_id', userId).is('handle', null);
+    if (!error) return h;
+  }
+  return null;
+}

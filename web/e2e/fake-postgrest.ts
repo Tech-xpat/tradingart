@@ -13,7 +13,7 @@ const UNIQUE: Record<string, string[][]> = {
 const DEFAULTS: Record<string, () => Row> = {
   art_users: () => ({ id: randomUUID(), tg_chat_id: null, tg_username: null, created_at: new Date().toISOString() }),
   art_vaults: () => ({ created_at: new Date().toISOString() }),
-  art_settings: () => ({ mode: 'medium', paused: true, live: false, max_position_sol: 0.05, max_daily_loss_pct: 20, max_concurrent: 1, plans: [], active_plan: null, public_profile: false, handle: null, follow_user_id: null, panic_at: null, updated_at: new Date().toISOString() }),
+  art_settings: () => ({ mode: 'medium', paused: true, live: false, max_position_sol: 0.05, max_daily_loss_pct: 20, max_concurrent: 1, plans: [], active_plan: null, public_profile: true, handle: null, follow_user_id: null, panic_at: null, updated_at: new Date().toISOString() }),
   art_consents: () => ({ id: Math.floor(Math.random() * 1e9), sig_kind: 'message', created_at: new Date().toISOString(), revoked_at: null }),
   art_withdrawals: () => ({ id: randomUUID(), status: 'pending', sig_kind: 'message', amount_lamports: null, tx_sig: null, error: null, created_at: new Date().toISOString(), processed_at: null }),
   art_state: () => ({ updated_at: new Date().toISOString() }),

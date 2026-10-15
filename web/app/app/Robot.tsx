@@ -246,7 +246,7 @@ export default function RobotTab({ me, refresh, run, busy, say, sign, openSheet 
 
         <div className="panel">
           <div className="panel-head"><h2>Leaderboard profile</h2>{s.public_profile && <span className="tag">public</span>}</div>
-          <p className="hint">Opt in to appear on the leaderboard. Others see your handle, profit, trade results and active plan so they can copy it. Never your wallet, balance or vault.</p>
+          <p className="hint">Everyone is listed by default. Others see your handle, profit, trade results and active plan so they can copy it, never your wallet, balance or vault. You can hide yourself any time.</p>
           <div className="row2">
             <div><span className="lbl">Handle</span><input className="field" aria-label="Leaderboard handle" maxLength={20} placeholder="e.g. coach_mishael" value={handle} onChange={(e) => setHandle(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))} /></div>
             <button className={`btn ${s.public_profile ? 'btn-ghost' : 'btn-gold'} sm`} aria-label={s.public_profile ? 'Hide me from the leaderboard' : 'Show me on the leaderboard'} disabled={!!busy}

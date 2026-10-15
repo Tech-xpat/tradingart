@@ -122,8 +122,8 @@ export default function LeadersTab({ signedIn, me, refresh, say, goRobot }: { si
       {err && <p className="hint dn">{err}</p>}
       {!rows && !err && <p className="hint">Loading…</p>}
       {rows && rows.length === 0 && (
-        <div className="panel"><div className="empty">No public traders with {mode} trades in this period yet.
-          {me && !me.settings.public_profile && <> <button className="linkbtn" onClick={goRobot}>Put yourself on the board</button>.</>}</div></div>
+        <div className="panel"><div className="empty">No traders with {mode} trades in this period yet. Everyone who trades is listed here.
+          {me && me.settings.public_profile === false && <> <button className="linkbtn" onClick={goRobot}>You are hidden. Show yourself</button>.</>}</div></div>
       )}
       {rows && rows.map((r) => (
         <button key={r.handle} className={`lbrow ${r.me ? 'me' : ''}`} onClick={() => setOpen(r.handle)} aria-label={`Open @${r.handle}`}>
