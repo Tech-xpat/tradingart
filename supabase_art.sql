@@ -54,14 +54,14 @@ create table if not exists public.art_settings (
   updated_at         timestamptz not null default now()
 );
 
--- Upgrading an existing database, run these:
---   alter table public.art_settings add column if not exists size_usd double precision;
---   alter table public.art_settings add column if not exists plans jsonb not null default '[]'::jsonb;
---   alter table public.art_settings add column if not exists active_plan text;
---   alter table public.art_settings add column if not exists public_profile boolean not null default true;
---   alter table public.art_settings add column if not exists handle text;
---   alter table public.art_settings add column if not exists follow_user_id uuid references public.art_users(id) on delete set null;
---   create unique index if not exists art_settings_handle_uq on public.art_settings (lower(handle)) where handle is not null;
+-- Upgrade block: makes this whole file safe to re-run on a database that already has the tables.
+-- ("create table if not exists" skips existing tables, so new columns are added here.)
+alter table public.art_settings add column if not exists size_usd double precision;
+alter table public.art_settings add column if not exists plans jsonb not null default '[]'::jsonb;
+alter table public.art_settings add column if not exists active_plan text;
+alter table public.art_settings add column if not exists public_profile boolean not null default true;
+alter table public.art_settings add column if not exists handle text;
+alter table public.art_settings add column if not exists follow_user_id uuid references public.art_users(id) on delete set null;
 
 create unique index if not exists art_settings_handle_uq on public.art_settings (lower(handle)) where handle is not null;
 create index if not exists art_settings_follow_idx on public.art_settings (follow_user_id) where follow_user_id is not null;
