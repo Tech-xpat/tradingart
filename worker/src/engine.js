@@ -110,10 +110,18 @@ class Engine {
     } catch (e) { logger.error('withdrawTick:', e.message); } finally { this.withdrawing = false; }
   }
 
+  /** Tell the website we are alive and whether live trading is really on. Best effort: never blocks trading. */
+  async heartbeat() {
+    if (!this.db.heartbeat) return;
+    try { await this.db.heartbeat({ live_enabled: !!config.LIVE_TRADING_ENABLED, version: config.VERSION, accounts: this.accounts.size }); this.hbFailed = false; }
+    catch (e) { if (!this.hbFailed) logger.warn(`heartbeat failed (run the art_worker SQL in supabase_art.sql): ${e.message}`); this.hbFailed = true; }
+  }
+
   async start() {
     // A withdrawal left "processing" by a crash may or may not have been sent: never retry blindly.
     try { for (const r of await this.db.stuckWithdrawals()) await this.db.finishWithdrawal(r.id, { status: 'failed', error: 'worker restarted mid-send; check your wallet and vault balance before requesting again' }); } catch (e) { logger.warn('stuck withdrawals:', e.message); }
     await this.sync();
+    this.heartbeat(); this.timers.push(setInterval(() => this.heartbeat(), 15000));
     this.timers.push(setInterval(() => this.sync(), config.SYNC_MS));
     this.timers.push(setInterval(() => this.scanTick(), 5000));
     this.timers.push(setInterval(() => this.monitorTick(), config.PRICE_POLL_MS));

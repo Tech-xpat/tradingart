@@ -127,6 +127,20 @@ export default function RobotTab({ me, refresh, run, busy, say, sign, openSheet 
   return (
     <div className="robot">
       <div className="stack">
+        {/* service status: says plainly why trades or withdrawals may be waiting */}
+        {(!me.worker || !me.worker.online) && (
+          <div className="rbar warnbar" role="status"><div className="rtxt"><b>Robot service is not reporting in</b>
+            <span>{me.worker ? `Last seen ${Math.round(me.worker.ageSec / 60)} min ago.` : 'It has not reported in yet.'} Trades and withdrawals wait until it runs. Owner: check the Railway worker is deployed, running, and has the Supabase variables; also run the art_worker SQL.</span></div></div>
+        )}
+        {me.worker?.online && s.live && !me.worker.liveEnabled && (
+          <div className="rbar warnbar" role="status"><div className="rtxt"><b>Live trading is off on the server</b>
+            <span>You chose Live, but the robot service is running in paper-only mode, so no real trades are placed. Owner: set LIVE_TRADING_ENABLED=true on Railway and redeploy.</span></div></div>
+        )}
+        {!me.liveEnabled && (
+          <div className="rbar warnbar" role="status"><div className="rtxt"><b>Live trading is not enabled on the website</b>
+            <span>The Live switch is locked. Owner: set LIVE_ENABLED=true on Vercel and redeploy.</span></div></div>
+        )}
+
         {/* compact robot control: red = off, green = trading */}
         {phase === 'vault' && (
           <div className="rbar setup"><div className="rtxt"><b>Step 1 · Vault</b><span>Create the wallet the robot trades from.</span></div>

@@ -132,8 +132,9 @@ async def main():
             assert await pg.get_by_label("Trade size in dollars").input_value() == "12", "saved plan values persist"
             assert await pg.get_by_label("Maximum coin age value").input_value() == "2"
             await pg.screenshot(path=f"{OUT}/{name}_4b_plans.png", full_page=True)
+            await pg.get_by_text("Robot service is not reporting in").wait_for(timeout=5000)  # no worker in this test: the banner says so
             await pg.get_by_role("switch", name="Start robot").click(); await pg.wait_for_selector("text=Robot started", timeout=8000)
-            assert "on" in (await pg.locator(".rbar").get_attribute("class")), "bar is green while trading"
+            assert "on" in (await pg.locator(".rbar:not(.warnbar)").get_attribute("class")), "bar is green while trading"
             await pg.wait_for_timeout(1500)
             await pg.screenshot(path=f"{OUT}/{name}_5_running.png", full_page=True)
             await pg.get_by_role("button", name="Deposit", exact=True).click()
@@ -147,7 +148,7 @@ async def main():
             await pg.get_by_role("button", name="Review withdrawal").click(); await pg.wait_for_selector("text=Your wallet will ask you to sign this")
             await pg.get_by_role("button", name="Sign and withdraw").click(); await pg.wait_for_selector("text=Withdrawal requested", timeout=8000)
             await pg.get_by_role("switch", name="Pause robot").click(); await pg.wait_for_selector("text=Robot paused", timeout=8000)
-            assert "off" in (await pg.locator(".rbar").get_attribute("class")), "bar is red when off"
+            assert "off" in (await pg.locator(".rbar:not(.warnbar)").get_attribute("class")), "bar is red when off"
             await pg.wait_for_timeout(600)
             await pg.screenshot(path=f"{OUT}/{name}_6_final.png", full_page=True)
             # --- leaderboard: opt in for real, then browse a mocked board + profile, copy plan ---

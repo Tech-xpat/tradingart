@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const { wallet, signMsg, signMemoTx } = require('./helpers');
 const m = require('../src/vault/messages');
-const { validateWithdrawal } = require('../src/trading/withdraw');
+const { validateWithdrawal, processWithdrawal } = require('../src/trading/withdraw');
 
 function mk(over = {}) {
   const owner = wallet(), vault = wallet(), attacker = wallet();
@@ -66,4 +66,13 @@ test('a withdrawal to the vault itself is rejected', () => {
   const text = m.withdrawMessage({ wallet: t.owner.address, vault: t.vault.address, amount: '0.5 SOL', to: t.vault.address, nonce: 'z', issuedAt: t.now.toISOString() });
   const r = validateWithdrawal({ req: { ...t.req, message: text, signature: signMsg(t.owner, text), to_address: t.vault.address }, user: t.user, vault: t.v });
   assert.ok(!r.ok); assert.match(r.reason, /vault itself/);
+});
+
+test('a withdrawal that would strand a dust balance is refused with a clear reason, never sent', async () => {
+  const t = mk({ amount: '0.5 SOL' });
+  let finished = null, sent = false;
+  const db = { users: async () => new Map([['u', { wallet: t.owner.address }]]), vaults: async () => new Map([['u', { address: t.v.address }]]), finishWithdrawal: async (id, p) => { finished = p; } };
+  const deps = { chain: { getSolLamports: async () => 500_000_000n + 5000n + 100_000n }, swap: { landTx: async () => { sent = true; return 'sig'; } } };
+  await processWithdrawal({ ...t.req, id: 'w1', user_id: 'u' }, { db, deps, getSigner: async () => { throw new Error('should not sign'); }, hasOpenPositions: async () => false });
+  assert.strictEqual(finished.status, 'rejected'); assert.match(finished.error, /0\.00089/); assert.strictEqual(sent, false);
 });

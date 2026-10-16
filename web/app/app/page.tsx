@@ -172,6 +172,7 @@ export default function Dashboard() {
       {sheet === 'withdraw' && me && (
         <Sheet title="Withdraw" onClose={closeSheet.current}>
           <p>Send funds from your vault to your connected wallet (<span className="mono">{short(me.wallet)}</span>) or to any Solana address you paste. You sign the exact destination, so nothing can change it afterwards. If you have open live trades, press “Stop and sell all” first.</p>
+          {!me.worker?.online && <p className="hint warn">The robot service is not reporting in right now, so a withdrawal will wait until it is back. Nothing is lost.</p>}
           {!wPreview ? (
             <>
               <span className="lbl">Send to</span>

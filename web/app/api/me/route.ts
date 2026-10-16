@@ -31,7 +31,14 @@ export const GET = authed({ limit: [90, 60_000] }, async ({ session }) => {
     const h = await ensureHandle(sb, session.userId, session.wallet);
     if (h) settingsRow = { ...settingsRow, handle: h, public_profile: true };
   }
+  // is the robot service alive, and is live trading really switched on there? (null = it has never reported in)
+  let worker: { online: boolean; liveEnabled: boolean; ageSec: number; version: string | null } | null = null;
+  try {
+    const { data } = await sb.from('art_worker').select('beat,live_enabled,version').eq('id', 'main').maybeSingle();
+    if (data) { const age = Math.max(0, Math.round((Date.now() - Date.parse(data.beat)) / 1000)); worker = { online: age < 90, liveEnabled: !!data.live_enabled, ageSec: age, version: data.version || null }; }
+  } catch { /* table not created yet */ }
   return json({
+    worker,
     wallet: session.wallet,
     telegramLinked: !!must(user, 'user').tg_chat_id,
     vault: v ? { address: v.address, balanceSol: await solBalance(v.address) } : null,

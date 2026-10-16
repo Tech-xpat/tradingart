@@ -9,6 +9,7 @@ const { verifyProof } = require('../vault/verify');
 const { rpc } = require('../solana/rpc');
 
 const FEE_LAMPORTS = 5000n;
+const RENT_MIN = 890880n; // a system account may hold 0 or at least this much; anything in between is refused by the network
 const MAX_AGE_MS = 20 * 60 * 1000;
 
 /** Pure check. Returns { ok:true, lamports:bigint|null } or { ok:false, reason }. */
@@ -57,6 +58,9 @@ async function processWithdrawal(req, { db, deps, getSigner, hasOpenPositions })
     let lamports = v.lamports == null ? bal - FEE_LAMPORTS : v.lamports;
     if (lamports <= 0n) return fail('rejected', 'nothing to withdraw');
     if (lamports + FEE_LAMPORTS > bal) return fail('rejected', 'amount is more than the vault balance (network fee included)');
+    const left = bal - lamports - FEE_LAMPORTS;
+    // the network refuses a transfer that leaves a tiny non-zero balance; never send more than the owner signed, so say so
+    if (left > 0n && left < RENT_MIN) return fail('rejected', 'that would leave less than 0.00089 SOL in the vault, which Solana does not allow. Withdraw a little less, or withdraw everything (leave the amount blank).');
     const signer = await getSigner(req.user_id, vault);
     const sig = await sendSol(signer, v.to, lamports, deps);
     return db.finishWithdrawal(req.id, { status: 'done', tx_sig: sig, amount_lamports: String(lamports) });
@@ -65,4 +69,4 @@ async function processWithdrawal(req, { db, deps, getSigner, hasOpenPositions })
   }
 }
 
-module.exports = { validateWithdrawal, processWithdrawal, FEE_LAMPORTS };
+module.exports = { validateWithdrawal, processWithdrawal, FEE_LAMPORTS, RENT_MIN };

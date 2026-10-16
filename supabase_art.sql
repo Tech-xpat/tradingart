@@ -120,10 +120,20 @@ create table if not exists public.art_link_codes (
   expires_at timestamptz not null
 );
 
+-- The worker reports in here every ~15 s so the website can tell users whether the robot service is running
+-- and whether live trading is switched on for real.
+create table if not exists public.art_worker (
+  id            text primary key,
+  beat          timestamptz not null default now(),
+  live_enabled  boolean not null default false,
+  version       text,
+  accounts      integer not null default 0
+);
+
 do $$
 declare t text;
 begin
-  foreach t in array array['art_users','art_vaults','art_consents','art_settings','art_state','art_trades','art_withdrawals','art_link_codes']
+  foreach t in array array['art_users','art_vaults','art_consents','art_settings','art_state','art_trades','art_withdrawals','art_link_codes','art_worker']
   loop
     execute format('alter table public.%I enable row level security', t);
     execute format('revoke all on public.%I from anon, authenticated', t);

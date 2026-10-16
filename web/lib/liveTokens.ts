@@ -26,12 +26,6 @@ const MAX_TRACKED = 160;
 /** Bonding-curve progress from the virtual SOL reserve (starts ~30, graduates ~115). Approximate by nature. */
 export const curveProgress = (vSol: number) => Math.max(0, Math.min(1, (vSol - 30) / 85));
 
-const ipfs = (u: string | null) => {
-  if (!u) return null;
-  if (u.startsWith('ipfs://')) return `https://ipfs.io/ipfs/${u.slice(7)}`;
-  return /^https:\/\//.test(u) ? u : null;
-};
-
 function blank(mint: string): Tok {
   return { mint, name: null, symbol: null, uri: null, image: null, description: null, createdAt: Date.now(), kind: 'new', migratedAt: null, mcapSol: null, progress: null, volSol: 0, buys: 0, sells: 0, lastAt: Date.now(), dex: null };
 }
@@ -45,7 +39,7 @@ export function useLiveTokens() {
   const [status, setStatus] = useState<FeedStatus>('connecting');
   const [solUsd, setSolUsd] = useState<number | null>(null);
   const failures = useRef(0);
-  const metaQ = useRef<string[]>([]); const metaBusy = useRef(0);
+  const metaQ = useRef<string[]>([]); const metaBusy = useRef(0); const metaTries = useRef(new Map<string, number>());
 
   const touch = () => { dirty.current = true; };
 
@@ -55,19 +49,21 @@ export function useLiveTokens() {
       const saved = JSON.parse(localStorage.getItem(CACHE_KEY) || '[]') as Tok[];
       const cutoff = Date.now() - CACHE_MAX_AGE;
       for (const t of Array.isArray(saved) ? saved : []) if (t && typeof t.mint === 'string' && (t.lastAt || 0) > cutoff && !store.current.has(t.mint)) store.current.set(t.mint, { ...blank(t.mint), ...t });
-      if (store.current.size) { dirty.current = true; setTick((n) => n + 1); }
+      if (store.current.size) { dirty.current = true; setTick((n) => n + 1); for (const t of store.current.values()) if (t.uri && !t.image) metaQ.current.push(t.mint); pumpMeta(); }
     } catch { /* no saved list yet, or storage is blocked */ }
   }, []);
   const upsert = (mint: string, fn: (t: Tok) => void) => { let t = store.current.get(mint); if (!t) { t = blank(mint); store.current.set(mint, t); } fn(t); t.lastAt = Date.now(); touch(); return t; };
 
   const pumpMeta = useCallback(() => {
-    while (metaBusy.current < 3 && metaQ.current.length) {
-      const mint = metaQ.current.shift()!; const t = store.current.get(mint); const url = ipfs(t?.uri || null);
-      if (!t || !url || t.image) continue;
+    while (metaBusy.current < 4 && metaQ.current.length) {
+      const mint = metaQ.current.shift()!; const t = store.current.get(mint);
+      if (!t || !t.uri || t.image) continue;
       metaBusy.current += 1;
-      fetch(url, { signal: AbortSignal.timeout(5000) }).then((r) => (r.ok ? r.json() : null)).then((j) => {
+      // the server reads the metadata file (several IPFS gateways, cached); the browser alone is rate limited
+      fetch(`/api/meta?uri=${encodeURIComponent(t.uri)}`, { signal: AbortSignal.timeout(15000) }).then((r) => (r.ok ? r.json() : null)).then((j) => {
         if (!j) return;
-        upsert(mint, (x) => { x.image = ipfs(j.image || null) || x.image; x.description = (typeof j.description === 'string' ? j.description : x.description) || null; if (!x.name && j.name) x.name = String(j.name); if (!x.symbol && j.symbol) x.symbol = String(j.symbol); });
+        if (!j.image && !j.description) { const n = (metaTries.current.get(mint) || 0) + 1; metaTries.current.set(mint, n); if (n < 4) setTimeout(() => { metaQ.current.push(mint); pumpMeta(); }, 4000 * n); return; }
+        upsert(mint, (x) => { x.image = (typeof j.image === 'string' ? j.image : null) || x.image; x.description = (typeof j.description === 'string' ? j.description : x.description) || null; if (!x.name && j.name) x.name = String(j.name); if (!x.symbol && j.symbol) x.symbol = String(j.symbol); });
       }).catch(() => {}).finally(() => { metaBusy.current -= 1; pumpMeta(); });
     }
   }, []);
@@ -97,7 +93,7 @@ export function useLiveTokens() {
     if (!m || typeof m !== 'object' || typeof m.mint !== 'string') return;
     if (m.txType === 'create') {
       upsert(m.mint, (t) => {
-        t.name = m.name || t.name; t.symbol = m.symbol || t.symbol; t.uri = m.uri || t.uri; t.createdAt = Date.now();
+        t.name = m.name || t.name; t.symbol = m.symbol || t.symbol; t.uri = typeof m.uri === 'string' && m.uri.length < 400 ? m.uri : t.uri; t.createdAt = Date.now();
         if (typeof m.marketCapSol === 'number') t.mcapSol = m.marketCapSol;
         if (typeof m.vSolInBondingCurve === 'number') t.progress = curveProgress(m.vSolInBondingCurve);
         if (typeof m.solAmount === 'number') { t.volSol += m.solAmount; t.buys += 1; }
