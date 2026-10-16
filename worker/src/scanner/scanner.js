@@ -74,7 +74,7 @@ function scoreChart(mkt, plan) {
   return score;
 }
 
-async function pickOne(plan, key = 'default') {
+async function pickOne(plan, key = 'default', stats = {}) {
   let seen = seenBy.get(key); if (!seen) { seen = new Map(); seenBy.set(key, seen); }
   const now = Date.now();
   for (const [m, ts] of seen) if (now - ts > SEEN_TTL_MS) seen.delete(m);
@@ -82,6 +82,7 @@ async function pickOne(plan, key = 'default') {
   const mints = new Set(stream.recent(plan.minAgeSec, plan.maxAgeSec, 40));
   for (const m of await feedCandidates()) mints.add(m);
   const candidates = [...mints];
+  stats.candidates = candidates.length;
   if (!candidates.length) { logger.info(`scanner[${plan.name}]: no candidates this cycle`); return null; }
   const scored = [];
   for (const mint of candidates) {
@@ -94,6 +95,7 @@ async function pickOne(plan, key = 'default') {
     } catch (_) {}
     await sleep(60);
   }
+  stats.matched = scored.length;
   scored.sort((a, b) => b.score - a.score);
   if (!scored.length) { logger.info(`scanner[${plan.name}]: ${candidates.length} candidates, none passed (age ${fmtAge(plan.minAgeSec)}–${plan.maxAgeSec == null ? 'any' : fmtAge(plan.maxAgeSec)}${plan.requireRising ? ', rising' : ''})`); return null; }
   const top = scored.slice(0, 5);

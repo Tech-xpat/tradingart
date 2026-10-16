@@ -128,7 +128,7 @@ export default function RobotTab({ me, refresh, run, busy, say, sign, openSheet 
     <div className="robot">
       <div className="stack">
         {/* service status: says plainly why trades or withdrawals may be waiting */}
-        {(!me.worker || !me.worker.online) && (
+        {!me.workerUnknown && (!me.worker || !me.worker.online) && (
           <div className="rbar warnbar" role="status"><div className="rtxt"><b>Robot service is not reporting in</b>
             <span>{me.worker ? `Last seen ${Math.round(me.worker.ageSec / 60)} min ago.` : 'It has not reported in yet.'} Trades and withdrawals wait until it runs. Owner: check the Railway worker is deployed, running, and has the Supabase variables; also run the art_worker SQL.</span></div></div>
         )}
@@ -160,6 +160,17 @@ export default function RobotTab({ me, refresh, run, busy, say, sign, openSheet 
             <button className={`pwr ${running ? 'on' : 'off'}`} role="switch" aria-checked={running} aria-label={running ? 'Pause robot' : 'Start robot'} disabled={!!busy}
               onClick={() => patch('toggle', { paused: running }, running ? 'Robot paused. Open trades still follow their exits.' : 'Robot started.')}><i /></button>
           </div>
+        )}
+
+        {(phase === 'running' || phase === 'ready') && trades?.status && (
+          <div className="scanline" aria-live="polite">
+            <b>{running ? 'Last scan' : 'Last scan (before pause)'} {ago(Date.now() - trades.status.at)} ago</b>
+            <span>{trades.status.candidates} coin{trades.status.candidates === 1 ? '' : 's'} checked · {trades.status.outcome}{trades.status.book === 'paper' ? ' · paper' : ' · live'}</span>
+            {trades.status.note && <em>{trades.status.note}</em>}
+          </div>
+        )}
+        {hasVault && me.solUsd && bal != null && s.live && bal * me.solUsd < active!.sizeUsd + 1 && (
+          <p className="hint warn">Your vault holds about ${(bal * me.solUsd).toFixed(2)} and the plan trades ${active!.sizeUsd}. The robot shrinks each trade to fit what is available (it keeps a small amount for network fees), so lower the trade size in the plan if you want it fixed.</p>
         )}
 
         <div className="kpis">

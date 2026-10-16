@@ -28,9 +28,9 @@ module.exports = {
   CAP_MAX_SIZE_USD: num('CAP_MAX_SIZE_USD', 0), // 0 = no platform cap on trade size
   CAP_MAX_DAILY_LOSS_PCT: num('CAP_MAX_DAILY_LOSS_PCT', 50),
   CAP_MAX_CONCURRENT: num('CAP_MAX_CONCURRENT', 3),
-  MIN_VAULT_SOL: num('MIN_VAULT_SOL', 0.05),
+  MIN_VAULT_SOL: num('MIN_VAULT_SOL', 0.015),
   MIN_POSITION_SOL: num('MIN_POSITION_SOL', 0.01),
-  SOL_FEE_RESERVE: num('SOL_FEE_RESERVE', 0.03),
+  SOL_FEE_RESERVE: num('SOL_FEE_RESERVE', 0.006),
 
   // execution (same behaviour as the single-user bot)
   BUY_SLIPPAGE_PCT: num('BUY_SLIPPAGE_PCT', 15),

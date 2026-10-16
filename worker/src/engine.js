@@ -62,10 +62,12 @@ class Engine {
       for (const a of this.activeAccounts()) {
         if (Date.now() < (a.nextScanAt || 0)) continue;
         a.nextScanAt = Date.now() + a.plan.scanEverySec * 1000 - 500;
-        const pick = await this.deps.scanner.pickOne(a.plan, a.userId);
-        if (!pick) continue;
+        const stats = {};
+        const pick = await this.deps.scanner.pickOne(a.plan, a.userId, stats);
+        if (!pick) { a.noteScan({ candidates: stats.candidates || 0, matched: 0, outcome: stats.candidates ? 'none matched your plan this round' : 'no new coins in your age window this round' }); continue; }
         const why = `scanner:${pick.score.toFixed(0)}`;
         const res = await a.offer(pick.mint, why);
+        a.noteScan({ candidates: stats.candidates || 0, matched: stats.matched || 1, mint: pick.mint, outcome: res.ok ? 'entered a trade' : `found a match but skipped it: ${res.why}` });
         if (res.ok) {
           const p = res.pos;
           a.notify(`🟢 ENTERED ${pick.mint.slice(0, 6)}…${pick.mint.slice(-4)} · ${p.dryRun ? 'PAPER' : 'LIVE'}\n${why} · plan ${a.plan.name}\nin: ${p.sizeSol.toFixed(4)} SOL → ${(Number(p.tokenRaw) / 10 ** p.decimals).toFixed(2)} tokens (${p.fillSource})\nTP +${p.takeProfitPct}% · SL −${p.stopLossPct}% · max hold ${p.maxHoldMin}m${p.buySig ? `\nhttps://solscan.io/tx/${p.buySig}` : ''}`);

@@ -5,6 +5,7 @@ import { fetchFirst, candidates } from '@/lib/ipfs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+export const maxDuration = 10;
 
 /**
  * Tiny token thumbnails. Token art is often a multi-megabyte image on IPFS; the list only needs a 64px square.

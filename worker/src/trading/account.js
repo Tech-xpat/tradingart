@@ -347,6 +347,22 @@ class Account {
     this.liveAllowed = !!(config.LIVE_TRADING_ENABLED && settings.live && this.vaultAddress && this.consent);
   }
 
+  /** Why this account is not trading real money even though the user picked Live (null = it is, or they did not ask). */
+  liveBlock() {
+    if (!this.settings.live) return null;
+    if (!config.LIVE_TRADING_ENABLED) return 'LIVE_TRADING_ENABLED is false on the server, so the robot is paper trading';
+    if (!this.vaultAddress) return 'no vault yet, so the robot is paper trading';
+    if (!this.consent) return 'no signed limits yet, so the robot is paper trading';
+    return null;
+  }
+
+  /** Remember what the last scan did, so the website can answer "why is it not trading?". Best effort. */
+  noteScan(info) {
+    this.lastScan = { at: Date.now(), book: this.liveAllowed ? 'live' : 'paper', plan: this.plan.name, ...info, note: this.liveBlock() };
+    const db = this.deps && this.deps.db;
+    if (db && db.setState) db.setState(this.userId, 'status', this.lastScan).catch(() => {});
+  }
+
   get paused() { return !!this.settings.paused; }
   entryBook() { return this.liveAllowed ? this.books.live : this.books.paper; }
   hasOpen() { return this.books.paper.open.size + this.books.live.open.size > 0; }

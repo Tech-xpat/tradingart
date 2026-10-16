@@ -4,6 +4,7 @@ import { candidates, fetchFirst, ipfsPath } from '@/lib/ipfs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+export const maxDuration = 10;
 
 /**
  * Token metadata (image, description) for a new launch. The launch event only carries a link to a JSON file on IPFS;
@@ -19,7 +20,7 @@ export async function GET(req: NextRequest) {
   const hit = cache.get(uri);
   if (hit && Date.now() - hit.at < 3600_000) return json(hit.v);
   const empty = { image: null, description: null, name: null, symbol: null };
-  const got = await fetchFirst(uri, { accept: 'application/json', maxBytes: 200_000, maxTries: 5 });
+  const got = await fetchFirst(uri, { accept: 'application/json', maxBytes: 200_000, maxTries: 6 });
   if (!got) return json(empty); // a miss is not cached: the next ask may succeed
   let v: any = empty;
   try {

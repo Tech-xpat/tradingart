@@ -123,3 +123,24 @@ test('open trades keep a fresh up/down value and a progress trail in the stored 
   for (let i = 0; i < 200; i++) book.trail(book.open.get(MINT), i);
   assert.ok(book.open.get(MINT).trail.length <= 150);
 });
+
+test('a $5 vault can trade: size shrinks to fit, fee reserve is small, and the live minimum is low', async () => {
+  const deps = fakeDeps();
+  deps.chain.getSolBalance = async () => 0.0275; // about $5 at $180 per SOL
+  deps.scanner.fetchSolPriceUsd = async () => 180;
+  const a = mk(deps, { vault: 'VAULT', consent: { maxPositionSol: 0.05, maxDailyLossPct: 20, maxConcurrent: 1 } });
+  assert.ok(config.MIN_VAULT_SOL <= 0.02, 'live minimum must allow a $5 vault');
+  const sol = await a.books.live.sizeSol();
+  assert.ok(sol >= config.MIN_POSITION_SOL, `size ${sol} must clear the minimum`);
+  assert.ok(sol <= 0.0275 - config.SOL_FEE_RESERVE + 1e-9, 'never spends the fee reserve');
+  assert.ok(0.0275 >= config.MIN_VAULT_SOL, 'passes the vault minimum');
+});
+
+test('every scan leaves a plain-language status, and says why live is not running', async () => {
+  const saved = {};
+  const deps = fakeDeps(); deps.db.setState = async (u, k, v) => { saved[k] = v; };
+  const a = mk(deps, { settings: settings({ live: true }), vault: 'VAULT', consent: null });
+  assert.match(a.liveBlock(), /LIVE_TRADING_ENABLED|signed limits/);
+  a.noteScan({ candidates: 12, matched: 0, outcome: 'none matched your plan this round' });
+  assert.strictEqual(saved.status.candidates, 12); assert.strictEqual(saved.status.book, 'paper'); assert.ok(saved.status.note);
+});

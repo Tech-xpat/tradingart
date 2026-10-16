@@ -254,3 +254,5 @@ footer { padding: 26px 0 60px; color: var(--muted); font-size: 12px; max-width: 
 .curve .meter { margin:0; }
 
 .warnbar { border-color: rgba(255,210,63,.5); background: rgba(255,210,63,.07); } .warnbar b { color: var(--yellow); } .warnbar .rtxt span { display:block; font-size:12.5px; }
+
+.scanline { display:grid; gap:2px; padding:8px 12px; border:1px dashed var(--line); border-radius:12px; font: 500 12px var(--mono); color: var(--muted); } .scanline b { color: var(--ink); font-weight:600; } .scanline em { color: var(--yellow); font-style:normal; }

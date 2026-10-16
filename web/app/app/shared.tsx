@@ -7,6 +7,7 @@ export type Plan = {
 };
 export type Settings = { paused: boolean; live: boolean; max_position_sol: number; max_daily_loss_pct: number; max_concurrent: number; plans: Plan[]; active_plan: string | null; public_profile?: boolean; handle?: string | null; follow_user_id?: string | null };
 export type Me = {
+  workerUnknown?: boolean;
   worker: { online: boolean; liveEnabled: boolean; ageSec: number; version: string | null } | null;
   wallet: string; telegramLinked: boolean; liveEnabled: boolean; solUsd: number | null;
   vault: { address: string; balanceSol: number | null } | null;
@@ -16,7 +17,8 @@ export type Me = {
   limits: { maxPositionSol: { min: number; max: number }; maxDailyLossPct: { min: number; max: number }; maxConcurrent: { min: number; max: number }; minVaultSolForLive: number; minSizeUsd: number; defaultSizeUsd: number };
 };
 export type Pos = { mint: string; openedAt: number; sizeSol: number; lastPnl: number | null; status: string; takeProfitPct: number; stopLossPct: number; mode?: string; trail?: [number, number][] };
-export type Trades = { paper: { open: Pos[]; daily: any }; live: { open: Pos[]; daily: any }; trades: any[] };
+export type ScanStatus = { at: number; book: 'paper' | 'live'; plan: string; candidates: number; matched: number; outcome: string; note: string | null; mint?: string };
+export type Trades = { status?: ScanStatus | null; paper: { open: Pos[]; daily: any }; live: { open: Pos[]; daily: any }; trades: any[] };
 
 export const short = (s: string) => `${s.slice(0, 4)}…${s.slice(-4)}`;
 export const sol = (n: number | null | undefined, d = 4) => (n == null ? '–' : n.toFixed(d));

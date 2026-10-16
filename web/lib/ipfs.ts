@@ -31,23 +31,38 @@ export function candidates(raw: string): string[] {
   return out;
 }
 
-/** Fetch the first candidate that answers 200. Redirects are followed by hand, only to allowed hosts. */
-export async function fetchFirst(raw: string, opts: { accept: string; maxBytes: number; perTryMs?: number; maxTries?: number }): Promise<{ buf: Buffer; type: string } | null> {
-  const tries = candidates(raw).slice(0, opts.maxTries ?? 4);
-  for (const start of tries) {
-    let url = start;
-    try {
-      for (let hop = 0; hop < 4; hop++) {
-        const h = new URL(url).hostname; if (!hostAllowed(h)) break;
-        const r = await fetch(url, { signal: AbortSignal.timeout(opts.perTryMs ?? 4000), redirect: 'manual', headers: { accept: opts.accept } });
-        if (r.status >= 300 && r.status < 400 && r.headers.get('location')) { url = new URL(r.headers.get('location')!, url).toString(); continue; }
-        if (!r.ok) break;
-        if (Number(r.headers.get('content-length') || 0) > opts.maxBytes) return null;
-        const buf = Buffer.from(await r.arrayBuffer());
-        if (buf.length > opts.maxBytes) return null;
-        return { buf, type: r.headers.get('content-type') || '' };
-      }
-    } catch { /* try the next gateway */ }
-  }
+/** One candidate: follows redirects by hand, only to allowed hosts. Resolves null on any failure. */
+async function tryOne(start: string, opts: { accept: string; maxBytes: number }, signal: AbortSignal): Promise<{ buf: Buffer; type: string } | null> {
+  let url = start;
+  try {
+    for (let hop = 0; hop < 4; hop++) {
+      if (!hostAllowed(new URL(url).hostname)) return null;
+      const r = await fetch(url, { signal, redirect: 'manual', headers: { accept: opts.accept } });
+      if (r.status >= 300 && r.status < 400 && r.headers.get('location')) { url = new URL(r.headers.get('location')!, url).toString(); continue; }
+      if (!r.ok) return null;
+      if (Number(r.headers.get('content-length') || 0) > opts.maxBytes) return null;
+      const buf = Buffer.from(await r.arrayBuffer());
+      return buf.length > opts.maxBytes ? null : { buf, type: r.headers.get('content-type') || '' };
+    }
+  } catch { /* aborted or unreachable */ }
   return null;
+}
+
+/**
+ * Ask several gateways AT THE SAME TIME and take the first that answers, within one overall deadline (default 7 s,
+ * under Vercel's 10 s function limit). The slow ones are cancelled.
+ */
+export async function fetchFirst(raw: string, opts: { accept: string; maxBytes: number; totalMs?: number; maxTries?: number }): Promise<{ buf: Buffer; type: string } | null> {
+  const tries = candidates(raw).slice(0, opts.maxTries ?? 4);
+  if (!tries.length) return null;
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), opts.totalMs ?? 7000);
+  try {
+    return await new Promise((resolve) => {
+      let left = tries.length;
+      for (const u of tries) {
+        tryOne(u, opts, ctl.signal).then((got) => { if (got) resolve(got); else if (--left === 0) resolve(null); });
+      }
+    });
+  } finally { clearTimeout(timer); ctl.abort(); }
 }
