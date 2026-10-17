@@ -14,6 +14,7 @@ export type Tok = {
   mint: string; name: string | null; symbol: string | null; uri: string | null; image: string | null; description: string | null;
   createdAt: number; kind: 'new' | 'migrated'; migratedAt: number | null;
   mcapSol: number | null; progress: number | null; volSol: number; buys: number; sells: number; lastAt: number; dex: TokenView | null;
+  own?: { c5: number; c1h: number } | null; thumb?: boolean; fromServer?: boolean;
 };
 export type FeedStatus = 'connecting' | 'live' | 'fallback';
 
@@ -170,6 +171,37 @@ export function useLiveTokens() {
     poll(); const id = setInterval(poll, 20000);
     return () => { stop = true; clearInterval(id); };
   }, [status]);
+
+  /* the robot's own records: every coin it has seen launch, with numbers, picture and chart already saved */
+  useEffect(() => {
+    let stop = false;
+    const go = async () => {
+      try {
+        const r = await fetch('/api/board', { cache: 'no-store' }); if (!r.ok) return; const j = await r.json(); if (stop) return;
+        if (typeof j.solUsd === 'number') setSolUsd(j.solUsd);
+        const apply = (rows: any[]) => {
+          for (const x of rows || []) {
+            if (!x || typeof x.mint !== 'string') continue;
+            let t = store.current.get(x.mint); if (!t) { t = blank(x.mint); store.current.set(x.mint, t); }
+            t.fromServer = true;
+            t.name = x.name || t.name; t.symbol = x.symbol || t.symbol; t.uri = x.uri || t.uri;
+            if (x.image) t.image = x.image; if (x.description) t.description = x.description; if (x.thumb) t.thumb = true;
+            if (x.createdAt) t.createdAt = x.createdAt;
+            if (typeof x.mcapSol === 'number') t.mcapSol = x.mcapSol;
+            if (typeof x.vSol === 'number') t.progress = x.migrated ? 1 : curveProgress(x.vSol);
+            if (x.migrated) { t.kind = 'migrated'; t.migratedAt = x.migratedAt || t.migratedAt || Date.now(); } else if (t.kind !== 'migrated') t.kind = 'new';
+            if (x.stats) { t.volSol = x.stats.volSol1h || 0; t.buys = x.stats.buys1h || 0; t.sells = x.stats.sells1h || 0; t.own = { c5: x.stats.c5 || 0, c1h: x.stats.c1h || 0 }; }
+            if (x.updatedAt) t.lastAt = Math.max(t.lastAt, x.updatedAt);
+            if (!x.thumb && !t.image && t.uri) { metaQ.current.push(x.mint); }
+          }
+        };
+        apply(j.new); apply(j.stretch); apply(j.migrated);
+        touch(); pumpMeta();
+      } catch { /* the live socket still works */ }
+    };
+    go(); const id = setInterval(go, 5000);
+    return () => { stop = true; clearInterval(id); };
+  }, [pumpMeta]);
 
   /* save the lists (newest first, trimmed) every few seconds and when the tab is hidden */
   useEffect(() => {

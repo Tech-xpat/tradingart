@@ -8,6 +8,7 @@
  */
 const { addTrade, BASE } = require('../charting');
 const logger = require('../utils/logger');
+const meta = require('./meta');
 
 const SUPPLY = 1e9;
 const MAX_TOKENS = 320;
@@ -38,8 +39,9 @@ function onMessage(m) {
   const e = entry(m.mint);
   if (tx === 'create') {
     e.created = true; e.firstSeen = Date.now(); e.name = m.name || e.name; e.symbol = m.symbol || e.symbol; e.uri = typeof m.uri === 'string' ? m.uri.slice(0, 400) : e.uri;
+    if (e.uri) meta.want(e.mint, e.uri); // the picture is fetched in the background, retried until it works
   }
-  if (tx === 'migrate') { e.migrated = true; e.dirty = true; return; }
+  if (tx === 'migrate') { e.migrated = true; e.migratedAt = Date.now(); e.dirty = true; return; }
   let mcap = Number(m.marketCapSol);
   if (!(mcap > 0)) { const s = Number(m.solAmount), t = Number(m.tokenAmount); mcap = s > 0 && t > 0 ? (s / t) * SUPPLY : NaN; }
   if (!(mcap > 0)) return;
@@ -74,18 +76,36 @@ function marketFor(mint, now = Date.now()) {
   };
 }
 
-/** Save recently active coins for the website's chart. At most `limit` rows per call, pinned and busiest first. */
+/** Numbers the Tokens list shows for a coin, from our own candles (no freshness limit, unlike marketFor). */
+function statsOf(e, now = Date.now()) {
+  const nowS = Math.floor(now / 1000);
+  const ago = (sec) => { for (const b of e.bars) if (b[0] >= nowS - sec) return b[1]; return null; };
+  const chg = (ref) => (ref > 0 && e.mcapSol ? ((e.mcapSol - ref) / ref) * 100 : 0);
+  let vol = 0, buys = 0, sells = 0;
+  for (const b of e.bars) if (b[0] >= nowS - 3600) { vol += b[5]; buys += b[6]; sells += b[7]; }
+  return { c5: +chg(ago(300)).toFixed(2), c1h: +chg(ago(3600) ?? (e.bars[0] && e.bars[0][1])).toFixed(2), volSol1h: +vol.toFixed(3), buys1h: buys, sells1h: sells, lastAt: e.lastAt };
+}
+
+/** Save recently active coins for the website: its Tokens lists and its charts. At most `limit` rows per call, pinned and busiest first. */
 async function flush(db, limit = 40) {
   if (!db || !db.saveCharts) return 0;
-  const rows = [...tokens.values()].filter((e) => e.dirty && e.bars.length)
+  // pictures that finished loading (written once, separately, so a slow chart save never delays them)
+  if (db.saveMeta) {
+    const done = meta.take(30);
+    if (done.length) {
+      try { await db.saveMeta(done.map(([mint, v]) => ({ mint, image: v.image, description: v.description, thumb: v.thumb, has_thumb: !!v.thumb }))); }
+      catch (err) { logger.warn(`picture save failed (run the latest supabase_art.sql): ${err.message}`); done.forEach(([m]) => meta.requeue(m)); }
+    }
+  }
+  const rows = [...tokens.values()].filter((e) => e.dirty && (e.bars.length || e.migrated))
     .sort((a, b) => (pinned.has(b.mint) - pinned.has(a.mint)) || (b.lastAt - a.lastAt)).slice(0, limit);
   if (!rows.length) return 0;
   rows.forEach((e) => { e.dirty = false; });
   try {
-    await db.saveCharts(rows.map((e) => ({ mint: e.mint, name: e.name, symbol: e.symbol, uri: e.uri, first_seen: new Date(e.firstSeen).toISOString(), mcap_sol: e.mcapSol, v_sol: e.vSol, migrated: e.migrated, bars: e.bars.slice(-SAVE_BARS), updated_at: new Date().toISOString() })));
+    await db.saveCharts(rows.map((e) => ({ mint: e.mint, name: e.name, symbol: e.symbol, uri: e.uri, created: e.created, first_seen: new Date(e.firstSeen).toISOString(), mcap_sol: e.mcapSol, v_sol: e.vSol, migrated: e.migrated, migrated_at: e.migratedAt ? new Date(e.migratedAt).toISOString() : null, stats: statsOf(e), bars: e.bars.slice(-SAVE_BARS), updated_at: new Date().toISOString() })));
   } catch (err) { rows.forEach((e) => { e.dirty = true; }); logger.warn(`chart save failed (run the art_charts SQL in supabase_art.sql): ${err.message}`); return 0; }
   return rows.length;
 }
 
 function _reset() { tokens.clear(); pinned.clear(); }
-module.exports = { onMessage, marketFor, barsFor, has, trackedMints, setSolUsd, pin, flush, _reset, MAX_TOKENS };
+module.exports = { statsOf, onMessage, marketFor, barsFor, has, trackedMints, setSolUsd, pin, flush, _reset, MAX_TOKENS };

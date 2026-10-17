@@ -53,7 +53,7 @@ async function tryOne(start: string, opts: { accept: string; maxBytes: number },
  * under Vercel's 10 s function limit). The slow ones are cancelled.
  */
 export async function fetchFirst(raw: string, opts: { accept: string; maxBytes: number; totalMs?: number; maxTries?: number }): Promise<{ buf: Buffer; type: string } | null> {
-  const tries = candidates(raw).slice(0, opts.maxTries ?? 4);
+  const tries = candidates(raw).slice(0, opts.maxTries ?? 7);
   if (!tries.length) return null;
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), opts.totalMs ?? 7000);

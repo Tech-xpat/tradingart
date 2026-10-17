@@ -18,19 +18,31 @@ function view(t: Tok, solUsd: number | null) {
   const txns = t.dex ? t.dex.txns1h.buys + t.dex.txns1h.sells : t.buys + t.sells;
   const created = t.dex?.pairCreatedAt || t.createdAt;
   const px = t.dex?.priceUsd ?? (mcap != null ? mcap / 1e9 : null); // pump.fun tokens have a 1B supply
-  return { mcap, vol, txns, created, change: t.dex?.change.h1 ?? null, liq: t.dex?.liquidityUsd ?? null, px };
+  return { mcap, vol, txns, created, change: t.dex?.change.h1 ?? t.own?.c1h ?? null, liq: t.dex?.liquidityUsd ?? null, px };
 }
 
-/** Small thumbnail: shrunk on our server to ~64px WebP, lazy, with initials until it arrives. */
+/**
+ * Small picture. First choice is the thumbnail our robot saved (instant, no gateways); otherwise the shrunk link through our
+ * server. A picture that fails is retried a few times with growing pauses, because IPFS gateways are slow, not gone.
+ */
 const thumb = (u: string | null, w = 64) => (u && /^https:\/\//.test(u) ? `/api/img?w=${w}&u=${encodeURIComponent(u)}` : null);
-function Avatar({ t, big }: { t: { image: string | null; symbol: string | null; name: string | null }; big?: boolean }) {
-  const [bad, setBad] = useState(false);
-  useEffect(() => setBad(false), [t.image]);
-  const src = thumb(t.image, big ? 128 : 64);
+const RETRY = [3000, 9000, 25000, 60000, 150000];
+function Avatar({ t, big }: { t: { mint?: string; thumb?: boolean; image: string | null; symbol: string | null; name: string | null }; big?: boolean }) {
+  const [attempt, setAttempt] = useState(0); // how many times the picture failed so far
+  const [failed, setFailed] = useState(false); // currently showing initials while we wait to retry
+  useEffect(() => { setAttempt(0); setFailed(false); }, [t.image, t.thumb]);
+  useEffect(() => {
+    if (!failed || attempt > RETRY.length) return;
+    const id = setTimeout(() => setFailed(false), RETRY[attempt - 1] ?? 150000);
+    return () => clearTimeout(id);
+  }, [failed, attempt]);
+  const own = t.mint && t.thumb ? `/api/thumb?mint=${t.mint}${attempt ? `&r=${attempt}` : ''}` : null;
+  const link = thumb(t.image, big ? 128 : 64);
+  const src = own || (link ? `${link}${attempt ? `&r=${attempt}` : ''}` : null);
   return (
     <div className={`avatar ${big ? 'big' : ''}`} aria-hidden>
       <span>{(t.symbol || t.name || '?').slice(0, 2).toUpperCase()}</span>
-      {src && !bad && <img src={src} alt="" width={big ? 58 : 36} height={big ? 58 : 36} loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => setBad(true)} />}
+      {src && !failed && attempt <= RETRY.length && <img key={src} src={src} alt="" width={big ? 58 : 36} height={big ? 58 : 36} loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => { setAttempt((n) => n + 1); setFailed(true); }} />}
     </div>
   );
 }
@@ -124,7 +136,7 @@ function TokenSheet({ mint, seed, solUsd, onClose }: { mint: string; seed: Tok |
   return (
     <Sheet title={`${name}${symbol ? ` · $${symbol}` : ''}`} onClose={onClose} wide>
       <div className="thead">
-        <Avatar big t={{ image, symbol: symbol || null, name }} />
+        <Avatar big t={{ mint, thumb: seed?.thumb, image, symbol: symbol || null, name }} />
         <div style={{ minWidth: 0 }}>
           <div className="mono" style={{ fontSize: 12, color: 'var(--muted)', wordBreak: 'break-all' }}>{mint}</div>
           <div className="row" style={{ marginTop: 6 }}>

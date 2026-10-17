@@ -144,7 +144,17 @@ create table if not exists public.art_charts (
   bars        jsonb not null default '[]'::jsonb,
   updated_at  timestamptz not null default now()
 );
+-- columns added later (safe to re-run on an existing database)
+alter table public.art_charts add column if not exists created     boolean not null default false;
+alter table public.art_charts add column if not exists migrated_at timestamptz;
+alter table public.art_charts add column if not exists stats       jsonb;
+alter table public.art_charts add column if not exists image       text;
+alter table public.art_charts add column if not exists description text;
+alter table public.art_charts add column if not exists thumb       text;          -- ~2 KB base64 WebP, made by the worker
+alter table public.art_charts add column if not exists has_thumb   boolean not null default false;
 create index if not exists art_charts_updated_idx on public.art_charts (updated_at desc);
+create index if not exists art_charts_first_seen_idx on public.art_charts (first_seen desc);
+create index if not exists art_charts_vsol_idx on public.art_charts (v_sol desc);
 
 do $$
 declare t text;
