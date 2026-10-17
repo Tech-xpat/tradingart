@@ -262,3 +262,13 @@ footer { padding: 26px 0 60px; color: var(--muted); font-size: 12px; max-width: 
 .warnbar { border-color: rgba(255,210,63,.5); background: rgba(255,210,63,.07); } .warnbar b { color: var(--yellow); } .warnbar .rtxt span { display:block; font-size:12.5px; }
 
 .scanline { display:grid; gap:2px; padding:8px 12px; border:1px dashed var(--line); border-radius:12px; font: 500 12px var(--mono); color: var(--muted); } .scanline b { color: var(--ink); font-weight:600; } .scanline em { color: var(--yellow); font-style:normal; }
+
+.chartbox.own .tfs button { min-width: 30px; }
+.chartbox.own .tfs button:disabled { opacity:.35; }
+.tape { margin-top:8px; display:grid; gap:2px; max-height:170px; overflow:hidden; }
+.pressure { height:4px; border-radius:3px; background:#ff5c6c55; overflow:hidden; margin-bottom:4px; }
+.pressure i { display:block; height:100%; background:#C6FF3D; transition: width .4s; }
+.trade { display:grid; grid-template-columns: 44px 1fr 1fr; gap:8px; font:500 11px var(--mono); padding:2px 6px; border-radius:6px; animation: tradein .5s ease-out; }
+.trade.buy { color:#C6FF3D; background:#C6FF3D12; } .trade.sell { color:#ff5c6c; background:#ff5c6c12; }
+.trade span { text-align:right; color:#cfd3da; }
+@keyframes tradein { from { transform: translateY(-6px); opacity:0; } to { transform:none; opacity:1; } }

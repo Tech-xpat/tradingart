@@ -21,7 +21,7 @@ let solUsd = 180;
 
 const entry = (mint) => {
   let e = tokens.get(mint);
-  if (!e) { e = { mint, bars: [], mcapSol: null, vSol: null, firstSeen: Date.now(), lastAt: 0, name: null, symbol: null, uri: null, dirty: false, trades: 0, migrated: false, created: false }; tokens.set(mint, e); }
+  if (!e) { e = { mint, bars: [], m1: [], m5: [], mcapSol: null, vSol: null, firstSeen: Date.now(), lastAt: 0, name: null, symbol: null, uri: null, dirty: false, trades: 0, migrated: false, created: false }; tokens.set(mint, e); }
   return e;
 };
 
@@ -47,7 +47,10 @@ function onMessage(m) {
   if (!(mcap > 0)) return;
   e.mcapSol = mcap; if (Number(m.vSolInBondingCurve) > 0) e.vSol = Number(m.vSolInBondingCurve);
   e.lastAt = Date.now(); e.trades += 1; e.dirty = true;
-  addTrade(e.bars, { t: e.lastAt / 1000, p: mcap, v: Number(m.solAmount) || 0, side: tx === 'create' ? 'buy' : tx }, BASE, MAX_BARS);
+  const tr = { t: e.lastAt / 1000, p: mcap, v: Number(m.solAmount) || 0, side: tx === 'create' ? 'buy' : tx };
+  addTrade(e.bars, tr, BASE, MAX_BARS);
+  addTrade(e.m1, tr, 60, 360); // 6 hours of 1-minute candles
+  addTrade(e.m5, tr, 300, 864); // 3 days of 5-minute candles, for the zoomed-out views
   if (tokens.size > MAX_TOKENS + 20) evict();
 }
 
@@ -102,7 +105,7 @@ async function flush(db, limit = 40) {
   if (!rows.length) return 0;
   rows.forEach((e) => { e.dirty = false; });
   try {
-    await db.saveCharts(rows.map((e) => ({ mint: e.mint, name: e.name, symbol: e.symbol, uri: e.uri, created: e.created, first_seen: new Date(e.firstSeen).toISOString(), mcap_sol: e.mcapSol, v_sol: e.vSol, migrated: e.migrated, migrated_at: e.migratedAt ? new Date(e.migratedAt).toISOString() : null, stats: statsOf(e), bars: e.bars.slice(-SAVE_BARS), updated_at: new Date().toISOString() })));
+    await db.saveCharts(rows.map((e) => ({ mint: e.mint, name: e.name, symbol: e.symbol, uri: e.uri, created: e.created, first_seen: new Date(e.firstSeen).toISOString(), mcap_sol: e.mcapSol, v_sol: e.vSol, migrated: e.migrated, migrated_at: e.migratedAt ? new Date(e.migratedAt).toISOString() : null, stats: statsOf(e), bars: e.bars.slice(-SAVE_BARS), bars_1m: e.bars.length > 12 ? e.m1 : [], bars_5m: e.bars.length > 12 ? e.m5 : [], updated_at: new Date().toISOString() })));
   } catch (err) { rows.forEach((e) => { e.dirty = true; }); logger.warn(`chart save failed (run the art_charts SQL in supabase_art.sql): ${err.message}`); return 0; }
   return rows.length;
 }

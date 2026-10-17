@@ -86,7 +86,7 @@ function Column({ title, hint, items, solUsd, now, onOpen, on, empty }: { title:
   );
 }
 
-type ChartRow = { name: string | null; symbol: string | null; firstSeen: string | null; mcapSol: number | null; vSol: number | null; migrated: boolean; bars: number[][]; updatedAt: string };
+type ChartRow = { name: string | null; symbol: string | null; firstSeen: string | null; mcapSol: number | null; vSol: number | null; migrated: boolean; bars: number[][]; bars1m: number[][]; bars5m: number[][]; updatedAt: string };
 
 function TokenSheet({ mint, seed, solUsd, onClose }: { mint: string; seed: Tok | null; solUsd: number | null; onClose: () => void }) {
   const [ch, setCh] = useState<ChartRow | null>(null);
@@ -115,7 +115,11 @@ function TokenSheet({ mint, seed, solUsd, onClose }: { mint: string; seed: Tok |
     const id = setInterval(() => { if (!closed) setN((x) => x + 1); }, 2000);
     return () => { closed = true; clearInterval(id); try { s?.close(); } catch { /* ignore */ } };
   }, [mint]);
-  const bars = useMemo(() => charting.mergeBars(getLocalBars(mint), ch?.bars || []) as number[][], [mint, ch, n]); // eslint-disable-line react-hooks/exhaustive-deps
+  const tiers = useMemo(() => {
+    const loc = getLocalBars(mint);
+    return { s5: charting.mergeBars(loc, ch?.bars || []) as number[][], m1: (ch?.bars1m || []) as number[][], m5: (ch?.bars5m || []) as number[][] };
+  }, [mint, ch, n]); // eslint-disable-line react-hooks/exhaustive-deps
+  const bars = tiers.s5;
   // Tokens we have no recorded candles for (older than the robot's watch list) get plain market numbers from our server instead.
   useEffect(() => {
     if (!loaded || ch) return;
@@ -164,7 +168,7 @@ function TokenSheet({ mint, seed, solUsd, onClose }: { mint: string; seed: Tok |
           <div className="cell"><span>Change 1h</span><b className={tv.change.h1 >= 0 ? 'up' : 'dn'}>{tv.change.h1.toFixed(1)}%</b></div>
         </div>
       ) : null}
-      {bars.length > 0 ? <Chart bars={bars} solUsd={solUsd} />
+      {bars.length > 0 ? <Chart mint={mint} tiers={tiers} solUsd={solUsd} />
         : <div className="coladd">{!loaded ? 'Loading chart…' : err || 'Listening for trades on this token. The chart starts the moment the next trade happens, and keeps building while you watch.'}</div>}
       {bars.length > 0 && bars.length < 12 && <p className="hint">Only {bars.length} candle{bars.length === 1 ? '' : 's'} so far. Our charts are built from live trades, so a token we have just started watching has no earlier history.</p>}
       <p className="hint">Candles are built by our own robot from live trades. New tokens are extremely risky; a token shown here is not a recommendation.</p>

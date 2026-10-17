@@ -42,3 +42,12 @@ test('trade price falls back to sol/token when the feed omits market cap', () =>
   collector.onMessage({ txType: 'buy', mint: M, solAmount: 2, tokenAmount: 50_000_000 });
   assert.ok(Math.abs(collector.barsFor(M).slice(-1)[0][4] - 40) < 1e-9);
 });
+
+test('coarser candle tiers are kept for the zoomed-out chart views', () => {
+  collector._reset();
+  collector.onMessage({ txType: 'create', mint: 'T1', name: 'T', symbol: 'T', marketCapSol: 30, vSolInBondingCurve: 31, solAmount: 1 });
+  for (let i = 0; i < 5; i++) collector.onMessage({ txType: 'buy', mint: 'T1', marketCapSol: 31 + i, vSolInBondingCurve: 32, solAmount: 1 });
+  const rows = []; return collector.flush({ saveCharts: async (r) => rows.push(...r) }).then(() => {
+    assert.strictEqual(rows[0].bars_1m.length, 0, 'tiny coins do not store tiers'); collector._reset();
+  });
+});

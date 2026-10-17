@@ -151,6 +151,8 @@ alter table public.art_charts add column if not exists stats       jsonb;
 alter table public.art_charts add column if not exists image       text;
 alter table public.art_charts add column if not exists description text;
 alter table public.art_charts add column if not exists thumb       text;          -- ~2 KB base64 WebP, made by the worker
+alter table public.art_charts add column if not exists bars_1m     jsonb not null default '[]'::jsonb;   -- 1-minute candles, up to 6 hours
+alter table public.art_charts add column if not exists bars_5m     jsonb not null default '[]'::jsonb;   -- 5-minute candles, up to 3 days
 alter table public.art_charts add column if not exists has_thumb   boolean not null default false;
 create index if not exists art_charts_updated_idx on public.art_charts (updated_at desc);
 create index if not exists art_charts_first_seen_idx on public.art_charts (first_seen desc);

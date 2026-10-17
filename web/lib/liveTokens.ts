@@ -24,6 +24,11 @@ export const STREAM = process.env.NEXT_PUBLIC_STREAM_URL || 'wss://pumpportal.fu
 /** Candles this browser has built itself from the live trades it saw (market cap in SOL). The token page merges these with the robot's recorded candles. */
 const localBars = new Map<string, number[][]>();
 export const getLocalBars = (mint: string): number[][] => localBars.get(mint) || [];
+/** The latest individual trades per coin (for the chart's buy/sell animation and the trade tape). */
+export type LiveTrade = { id: number; t: number; side: 'buy' | 'sell'; sol: number; mcapSol: number };
+const localTrades = new Map<string, LiveTrade[]>();
+let tradeSeq = 0;
+export const getLocalTrades = (mint: string): LiveTrade[] => localTrades.get(mint) || [];
 export function recordTrade(m: any) {
   if (!m || typeof m.mint !== 'string') return;
   const tx = m.txType; if (tx !== 'create' && tx !== 'buy' && tx !== 'sell') return;
@@ -32,6 +37,8 @@ export function recordTrade(m: any) {
   if (!(p > 0)) return;
   let b = localBars.get(m.mint); if (!b) { if (localBars.size > 400) localBars.delete(localBars.keys().next().value as string); b = []; localBars.set(m.mint, b); }
   charting.addTrade(b, { t: Date.now() / 1000, p, v: Number(m.solAmount) || 0, side: tx === 'create' ? 'buy' : tx }, 5, 720);
+  let l = localTrades.get(m.mint); if (!l) { if (localTrades.size > 120) localTrades.delete(localTrades.keys().next().value as string); l = []; localTrades.set(m.mint, l); }
+  l.push({ id: ++tradeSeq, t: Date.now(), side: tx === 'sell' ? 'sell' : 'buy', sol: Number(m.solAmount) || 0, mcapSol: p }); if (l.length > 60) l.shift();
 }
 const CACHE_KEY = 'art:tokens:v2';
 const CACHE_MAX_AGE = 24 * 3600 * 1000;
