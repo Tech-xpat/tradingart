@@ -1,0 +1,91 @@
+/**
+ * Our own market data. Every trade the live feed reports for the coins we follow is turned into 5-second candles
+ * and kept here. The robot reads prices, volume and chart shapes from this (no third-party chart service), and the
+ * website's own chart reads the saved copy (art_charts).
+ *
+ * Unit note: bar prices are MARKET CAP IN SOL (pump.fun coins have a fixed 1,000,000,000 supply), so patterns and
+ * charts never depend on the USD price of SOL.
+ */
+const { addTrade, BASE } = require('../charting');
+const logger = require('../utils/logger');
+
+const SUPPLY = 1e9;
+const MAX_TOKENS = 320;
+const MAX_BARS = 720; // one hour of 5 s bars
+const SAVE_BARS = 300; // what we store for the website (25 minutes)
+const FRESH_MS = 60 * 1000;
+const tokens = new Map(); // mint -> entry
+const pinned = new Set();
+let solUsd = 180;
+
+const entry = (mint) => {
+  let e = tokens.get(mint);
+  if (!e) { e = { mint, bars: [], mcapSol: null, vSol: null, firstSeen: Date.now(), lastAt: 0, name: null, symbol: null, uri: null, dirty: false, trades: 0, migrated: false, created: false }; tokens.set(mint, e); }
+  return e;
+};
+
+function evict() {
+  if (tokens.size <= MAX_TOKENS) return;
+  const drop = [...tokens.values()].filter((e) => !pinned.has(e.mint)).sort((a, b) => a.lastAt - b.lastAt).slice(0, tokens.size - MAX_TOKENS);
+  for (const e of drop) tokens.delete(e.mint);
+}
+
+/** One message from the live feed (create / buy / sell / migrate). */
+function onMessage(m) {
+  if (!m || typeof m.mint !== 'string') return;
+  const tx = m.txType;
+  if (tx !== 'create' && tx !== 'buy' && tx !== 'sell' && tx !== 'migrate') return;
+  const e = entry(m.mint);
+  if (tx === 'create') {
+    e.created = true; e.firstSeen = Date.now(); e.name = m.name || e.name; e.symbol = m.symbol || e.symbol; e.uri = typeof m.uri === 'string' ? m.uri.slice(0, 400) : e.uri;
+  }
+  if (tx === 'migrate') { e.migrated = true; e.dirty = true; return; }
+  let mcap = Number(m.marketCapSol);
+  if (!(mcap > 0)) { const s = Number(m.solAmount), t = Number(m.tokenAmount); mcap = s > 0 && t > 0 ? (s / t) * SUPPLY : NaN; }
+  if (!(mcap > 0)) return;
+  e.mcapSol = mcap; if (Number(m.vSolInBondingCurve) > 0) e.vSol = Number(m.vSolInBondingCurve);
+  e.lastAt = Date.now(); e.trades += 1; e.dirty = true;
+  addTrade(e.bars, { t: e.lastAt / 1000, p: mcap, v: Number(m.solAmount) || 0, side: tx === 'create' ? 'buy' : tx }, BASE, MAX_BARS);
+  if (tokens.size > MAX_TOKENS + 20) evict();
+}
+
+const setSolUsd = (v) => { if (v > 10) solUsd = v; };
+const pin = (mints) => { pinned.clear(); for (const m of mints) pinned.add(m); };
+const has = (mint) => tokens.has(mint);
+const barsFor = (mint) => (tokens.get(mint) || {}).bars || [];
+const trackedMints = () => [...tokens.keys()];
+
+/** The same snapshot shape the DexScreener module returns, built from our own trades. null = we have not seen it recently. */
+function marketFor(mint, now = Date.now()) {
+  const e = tokens.get(mint);
+  // only coins we saw being created have a trustworthy age; for anything else the caller falls back to another source
+  if (!e || !e.created || !e.mcapSol || now - e.lastAt > FRESH_MS) return null;
+  const ago = (sec) => { const cut = Math.floor(now / 1000) - sec; let ref = null; for (const b of e.bars) { if (b[0] >= cut) { ref = b[1]; break; } } return ref; };
+  const chg = (ref) => (ref > 0 ? ((e.mcapSol - ref) / ref) * 100 : 0);
+  const hourCut = Math.floor(now / 1000) - 3600;
+  let vol = 0, buys = 0, sells = 0;
+  for (const b of e.bars) if (b[0] >= hourCut) { vol += b[5]; buys += b[6]; sells += b[7]; }
+  const ageSec = Math.max(0, (now - e.firstSeen) / 1000);
+  return {
+    marketCapUsd: e.mcapSol * solUsd, liquidityUsd: (e.vSol || 0) * solUsd, priceUsd: (e.mcapSol / SUPPLY) * solUsd, priceNative: e.mcapSol / SUPPLY,
+    volume24h: vol * solUsd, volume1h: vol * solUsd, volume6h: vol * solUsd,
+    priceChange5m: chg(ago(300)), priceChange1h: chg(ago(3600) ?? (e.bars[0] && e.bars[0][1])), priceChange6h: chg(e.bars[0] && e.bars[0][1]), priceChange24h: 0,
+    pairCreatedAt: e.firstSeen, ageSec, ageDays: ageSec / 86400, buys1h: buys, sells1h: sells, pairUrl: null, dexId: e.migrated ? 'pumpswap' : 'pumpfun', source: 'own',
+  };
+}
+
+/** Save recently active coins for the website's chart. At most `limit` rows per call, pinned and busiest first. */
+async function flush(db, limit = 40) {
+  if (!db || !db.saveCharts) return 0;
+  const rows = [...tokens.values()].filter((e) => e.dirty && e.bars.length)
+    .sort((a, b) => (pinned.has(b.mint) - pinned.has(a.mint)) || (b.lastAt - a.lastAt)).slice(0, limit);
+  if (!rows.length) return 0;
+  rows.forEach((e) => { e.dirty = false; });
+  try {
+    await db.saveCharts(rows.map((e) => ({ mint: e.mint, name: e.name, symbol: e.symbol, uri: e.uri, first_seen: new Date(e.firstSeen).toISOString(), mcap_sol: e.mcapSol, v_sol: e.vSol, migrated: e.migrated, bars: e.bars.slice(-SAVE_BARS), updated_at: new Date().toISOString() })));
+  } catch (err) { rows.forEach((e) => { e.dirty = true; }); logger.warn(`chart save failed (run the art_charts SQL in supabase_art.sql): ${err.message}`); return 0; }
+  return rows.length;
+}
+
+function _reset() { tokens.clear(); pinned.clear(); }
+module.exports = { onMessage, marketFor, barsFor, has, trackedMints, setSolUsd, pin, flush, _reset, MAX_TOKENS };
