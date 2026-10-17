@@ -2,10 +2,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import Chart from './Chart';
 import * as charting from '@/lib/charting';
-import { useLiveTokens, LIST_SIZE, curveProgress, getLocalBars, recordTrade, STREAM, type Tok, type FeedStatus } from '@/lib/liveTokens';
+import { useLiveTokens, LIST_SIZE, curveProgress, getLocalBars, getLocalTrades, recordTrade, STREAM, type Tok, type FeedStatus } from '@/lib/liveTokens';
 import type { TokenView } from '@/lib/dex';
 import { riskOf, type Risk } from '@/lib/risk';
-import { api, Sheet, ago, usd } from './shared';
+import { api, Sheet, ago, usd, short, type Me, type Plan, AGENT_DEFAULT } from './shared';
 
 const STATUS_TEXT: Record<FeedStatus, string> = { connecting: 'Connecting…', live: 'Live', fallback: 'Backup feed' };
 
@@ -86,9 +86,66 @@ function Column({ title, hint, items, solUsd, now, onOpen, on, empty }: { title:
   );
 }
 
-type ChartRow = { name: string | null; symbol: string | null; firstSeen: string | null; mcapSol: number | null; vSol: number | null; migrated: boolean; bars: number[][]; bars1m: number[][]; bars5m: number[][]; updatedAt: string };
+type Tr = { t: number; side: 'buy' | 'sell'; sol: number; mcapSol: number; who?: string; sig?: string };
+type ChartRow = { trades?: any[];  name: string | null; symbol: string | null; firstSeen: string | null; mcapSol: number | null; vSol: number | null; migrated: boolean; bars: number[][]; bars1m: number[][]; bars5m: number[][]; updatedAt: string };
 
-function TokenSheet({ mint, seed, solUsd, onClose }: { mint: string; seed: Tok | null; solUsd: number | null; onClose: () => void }) {
+/** "Watch with my robot": a one-coin plan. The robot's chart agent looks for the pattern and enters even while you are away. */
+function WatchPanel({ mint, symbol, mcapUsd, me, onSaved, goRobot, onClose }: { mint: string; symbol: string | null | undefined; mcapUsd: number | null; me: Me | null; onSaved: () => Promise<unknown>; goRobot: () => void; onClose: () => void }) {
+  const lim = me?.limits;
+  const active = me?.settings.plans.find((p) => p.id === me.settings.active_plan) || me?.settings.plans[0];
+  const [pattern, setPattern] = useState<NonNullable<Plan['agent']>['pattern']>('double_bottom');
+  const [tfSec, setTf] = useState(15);
+  const [size, setSize] = useState(String(active?.sizeUsd ?? lim?.defaultSizeUsd ?? 7));
+  const [tp, setTp] = useState(String(active?.takeProfitPct ?? 40));
+  const [sl, setSl] = useState(String(active?.stopLossPct ?? 20));
+  const [hold, setHold] = useState(String(active?.maxHoldMin ?? 20));
+  const [mcMin, setMin] = useState('0');
+  const [mcMax, setMax] = useState(mcapUsd ? String(Math.round((mcapUsd * 4) / 1000) * 1000 || 100000) : '100000');
+  const [trigger, setTrigger] = useState<'confirm' | 'neckline'>('confirm');
+  const [makeActive, setMakeActive] = useState(true);
+  const [busy, setBusy] = useState(false); const [msg, setMsg] = useState<{ ok: boolean; t: string } | null>(null);
+  const plans = me?.settings.plans || [];
+  const save = async () => {
+    if (!me) return; setBusy(true); setMsg(null);
+    try {
+      const id = `w${Date.now().toString(36)}`;
+      const plan: Plan = { id, name: `Watch ${symbol ? '$' + symbol : short(mint)}`.slice(0, 24), sizeUsd: Number(size), minAgeSec: 0, maxAgeSec: null, takeProfitPct: Number(tp), stopLossPct: Number(sl), maxHoldMin: Number(hold), scanEverySec: 5, maxTradesDay: 5, minLiqUsd: 0, minVol1hUsd: 0, minBuys1h: 0, requireRising: false,
+        agent: { ...AGENT_DEFAULT, enabled: true, pattern, tfSec, mcapMinUsd: Number(mcMin) || 0, mcapMaxUsd: mcMax.trim() === '' ? null : Number(mcMax), trigger, onlyMint: mint } };
+      await api('/api/settings', { method: 'PATCH', body: JSON.stringify({ plans: [...plans, plan], activePlan: makeActive ? id : me.settings.active_plan }) });
+      await onSaved();
+      setMsg({ ok: true, t: makeActive ? `Done. Your robot now watches this coin for a ${pattern.replace('_', ' ')} and enters by itself, even while you are away.` : 'Saved as a plan. Switch to it on the Robot tab when you want it running.' });
+    } catch (e: any) { setMsg({ ok: false, t: e?.message || 'Could not save' }); } finally { setBusy(false); }
+  };
+  if (!me) return (
+    <div className="watchbox"><b>Watch this coin with your robot</b><p className="hint">Connect your wallet and sign in first, then come back. The robot trades from your own vault under the limits you signed.</p><div className="row"><button className="btn btn-gold sm" onClick={() => { onClose(); goRobot(); }}>Go to Robot</button><button className="btn btn-ghost sm" onClick={onClose}>Close</button></div></div>
+  );
+  return (
+    <div className="watchbox">
+      <b>Watch this coin with your robot</b>
+      <p className="hint">{me.settings.live ? 'Live mode is on: this will use real money from your vault.' : 'Practice mode: simulated fills until you switch to live on the Robot tab.'} The robot enters when the pattern shows, even if you are away, and sells by your take profit, stop loss and time limit.</p>
+      <div className="fgrid">
+        <div><span className="lbl">Pattern</span><select className="field" aria-label="Watch pattern" value={pattern} onChange={(e) => setPattern(e.target.value as any)}><option value="double_bottom">Double bottom</option><option value="breakout">Breakout</option><option value="dip_buy">Dip then bounce</option><option value="volume_spike">Volume spike</option></select></div>
+        <div><span className="lbl">Candle size</span><select className="field" aria-label="Watch candle size" value={tfSec} onChange={(e) => setTf(Number(e.target.value))}><option value={5}>5 seconds</option><option value={15}>15 seconds</option><option value={60}>1 minute</option><option value={300}>5 minutes</option></select></div>
+        <div><span className="lbl">Amount to buy (USD)</span><input className="field" inputMode="decimal" aria-label="Watch amount" value={size} onChange={(e) => setSize(e.target.value)} /></div>
+        <div><span className="lbl">Enter only if mcap between ($)</span><div className="row"><input className="field" inputMode="decimal" aria-label="Watch mcap from" value={mcMin} onChange={(e) => setMin(e.target.value)} /><input className="field" inputMode="decimal" aria-label="Watch mcap to" value={mcMax} onChange={(e) => setMax(e.target.value)} /></div></div>
+        <div><span className="lbl">Take profit (%)</span><input className="field" inputMode="decimal" value={tp} onChange={(e) => setTp(e.target.value)} /></div>
+        <div><span className="lbl">Stop loss (%)</span><input className="field" inputMode="decimal" value={sl} onChange={(e) => setSl(e.target.value)} /></div>
+        <div><span className="lbl">Sell after at most (min)</span><input className="field" inputMode="decimal" value={hold} onChange={(e) => setHold(e.target.value)} /></div>
+        {pattern === 'double_bottom' && <div><span className="lbl">Enter when</span><select className="field" value={trigger} onChange={(e) => setTrigger(e.target.value as any)}><option value="confirm">price turns up (earlier)</option><option value="neckline">middle peak breaks (safer)</option></select></div>}
+      </div>
+      <label className="check"><input type="checkbox" checked={makeActive} onChange={(e) => setMakeActive(e.target.checked)} />Make this my active plan now (the robot runs one plan at a time)</label>
+      {plans.length >= 10 && <p className="hint warn">You already have 10 plans. Delete one on the Robot tab first.</p>}
+      {msg && <div className={`note ${msg.ok ? 'ok' : 'err'}`} role="status">{msg.t}</div>}
+      <div className="row" style={{ marginTop: 10 }}>
+        <button className="btn btn-gold" disabled={busy || plans.length >= 10 || !(Number(size) >= (lim?.minSizeUsd ?? 1))} onClick={save}>{busy ? 'Saving…' : 'Start watching'}</button>
+        <button className="btn btn-ghost" onClick={onClose}>Close</button>
+      </div>
+    </div>
+  );
+}
+
+function TokenSheet({ mint, seed, solUsd, me, onSaved, goRobot, onClose }: { mint: string; seed: Tok | null; solUsd: number | null; me: Me | null; onSaved: () => Promise<unknown>; goRobot: () => void; onClose: () => void }) {
+  const [watch, setWatch] = useState(false);
   const [ch, setCh] = useState<ChartRow | null>(null);
   const [tv, setTv] = useState<TokenView | null>(seed?.dex || null);
   const [err, setErr] = useState<string | null>(null);
@@ -106,20 +163,35 @@ function TokenSheet({ mint, seed, solUsd, onClose }: { mint: string; seed: Tok |
   // The page also listens to this one token's trades directly, so a chart always starts filling the moment the sheet opens.
   const [n, setN] = useState(0);
   useEffect(() => {
-    let s: WebSocket | null = null, closed = false;
-    try {
-      s = new WebSocket(STREAM);
-      s.onopen = () => { try { s!.send(JSON.stringify({ method: 'subscribeTokenTrade', keys: [mint] })); } catch { /* ignore */ } };
-      s.onmessage = (e) => { try { const m = JSON.parse(String(e.data)); if (m && m.mint === mint) { recordTrade(m); } } catch { /* ignore */ } };
-    } catch { /* socket blocked: the robot's candles still load */ }
-    const id = setInterval(() => { if (!closed) setN((x) => x + 1); }, 2000);
-    return () => { closed = true; clearInterval(id); try { s?.close(); } catch { /* ignore */ } };
+    let s: WebSocket | null = null, closed = false, retry: ReturnType<typeof setTimeout> | null = null;
+    const open = () => {
+      if (closed) return;
+      try {
+        s = new WebSocket(STREAM);
+        s.onopen = () => { try { s!.send(JSON.stringify({ method: 'subscribeTokenTrade', keys: [mint] })); } catch { /* ignore */ } };
+        s.onmessage = (e) => { try { const m = JSON.parse(String(e.data)); if (m && m.mint === mint) recordTrade(m); } catch { /* ignore */ } };
+        s.onclose = () => { if (!closed) retry = setTimeout(open, 2000); };
+        s.onerror = () => { try { s?.close(); } catch { /* ignore */ } };
+      } catch { retry = setTimeout(open, 4000); }
+    };
+    open();
+    const id = setInterval(() => { if (!closed) setN((x) => x + 1); }, 1000);
+    return () => { closed = true; if (retry) clearTimeout(retry); clearInterval(id); try { s?.close(); } catch { /* ignore */ } };
   }, [mint]);
   const tiers = useMemo(() => {
     const loc = getLocalBars(mint);
     return { s5: charting.mergeBars(loc, ch?.bars || []) as number[][], m1: (ch?.bars1m || []) as number[][], m5: (ch?.bars5m || []) as number[][] };
   }, [mint, ch, n]); // eslint-disable-line react-hooks/exhaustive-deps
   const bars = tiers.s5;
+  const trades = useMemo<Tr[]>(() => {
+    const srv: Tr[] = (ch?.trades || []).map((x: any[]) => ({ t: Number(x[0]), side: x[1] === 's' ? 'sell' : 'buy', sol: Number(x[2]) || 0, mcapSol: Number(x[3]) || 0, who: x[4] || undefined, sig: x[5] || undefined }));
+    const loc: Tr[] = getLocalTrades(mint).map((x) => ({ t: x.t, side: x.side, sol: x.sol, mcapSol: x.mcapSol, who: x.who, sig: x.sig }));
+    const seen = new Set<string>(); const out: Tr[] = [];
+    for (const x of [...loc, ...srv].sort((a, b) => b.t - a.t)) { const k = x.sig ? x.sig : `${Math.round(x.t / 1000)}:${x.sol}:${x.side}`; if (seen.has(k)) continue; seen.add(k); out.push(x); if (out.length >= 80) break; }
+    return out;
+  }, [mint, ch, n]); // eslint-disable-line react-hooks/exhaustive-deps
+  const recent = trades.slice(0, 40); const bs = recent.filter((x) => x.side === 'buy').reduce((a, x) => a + x.sol, 0), ss = recent.filter((x) => x.side === 'sell').reduce((a, x) => a + x.sol, 0);
+  const replay = useMemo(() => (ch?.trades || []).slice(-40).reverse().map((x: any[]) => ({ side: x[1], sol: Number(x[2]) || 0, mcapSol: Number(x[3]) || 0, t: Number(x[0]) })), [ch?.trades?.length]); // eslint-disable-line react-hooks/exhaustive-deps
   // Tokens we have no recorded candles for (older than the robot's watch list) get plain market numbers from our server instead.
   useEffect(() => {
     if (!loaded || ch) return;
@@ -148,6 +220,10 @@ function TokenSheet({ mint, seed, solUsd, onClose }: { mint: string; seed: Tok |
           </div>
         </div>
       </div>
+      <div className="row" style={{ margin: '4px 0 10px' }}>
+        <button className="btn btn-gold sm" onClick={() => setWatch((w) => !w)} aria-expanded={watch}>🤖 Watch with my robot</button>
+      </div>
+      {watch && <WatchPanel mint={mint} symbol={symbol} mcapUsd={st?.mcap ?? tv?.marketCapUsd ?? null} me={me} onSaved={onSaved} goRobot={goRobot} onClose={() => setWatch(false)} />}
       {seed?.description && <p>{seed.description}</p>}
       {st ? (
         <div className="grid4">
@@ -168,15 +244,21 @@ function TokenSheet({ mint, seed, solUsd, onClose }: { mint: string; seed: Tok |
           <div className="cell"><span>Change 1h</span><b className={tv.change.h1 >= 0 ? 'up' : 'dn'}>{tv.change.h1.toFixed(1)}%</b></div>
         </div>
       ) : null}
-      {bars.length > 0 ? <Chart mint={mint} tiers={tiers} solUsd={solUsd} />
+      {bars.length > 0 ? <Chart mint={mint} tiers={tiers} solUsd={solUsd} replay={replay} />
         : <div className="coladd">{!loaded ? 'Loading chart…' : err || 'Listening for trades on this token. The chart starts the moment the next trade happens, and keeps building while you watch.'}</div>}
       {bars.length > 0 && bars.length < 12 && <p className="hint">Only {bars.length} candle{bars.length === 1 ? '' : 's'} so far. Our charts are built from live trades, so a token we have just started watching has no earlier history.</p>}
+      <div className="hist" aria-label="Trade history">
+        <div className="histhead"><b>Trades by everyone</b><span className="mono">{trades.length ? `${recent.filter((x) => x.side === 'buy').length} buys · ${recent.filter((x) => x.side === 'sell').length} sells (last ${recent.length})` : 'waiting for the first trade'}</span></div>
+        <div className="pressure" title="Share of recent SOL that was buying"><i style={{ width: `${bs + ss ? Math.round((bs / (bs + ss)) * 100) : 50}%` }} /></div>
+        <div className="hrow hh"><span>Time</span><span>Type</span><span>SOL</span><span>Market cap</span><span>Trader</span></div>
+        <div className="hbody">{trades.map((x, i) => <div key={`${x.sig || x.t}-${i}`} className={`hrow ${x.side}`}><span>{new Date(x.t).toLocaleTimeString([], { hour12: false })}</span><b>{x.side === 'buy' ? 'BUY' : 'SELL'}</b><span>{x.sol.toFixed(2)}</span><span>{solUsd ? usd(x.mcapSol * solUsd) : `${x.mcapSol.toFixed(1)} SOL`}</span><span className="mono">{x.who || '–'}</span></div>)}</div>
+      </div>
       <p className="hint">Candles are built by our own robot from live trades. New tokens are extremely risky; a token shown here is not a recommendation.</p>
     </Sheet>
   );
 }
 
-export default function TokensTab() {
+export default function TokensTab({ me, onSaved, goRobot }: { me: Me | null; onSaved: () => Promise<unknown>; goRobot: () => void }) {
   const feed = useLiveTokens();
   const [sub, setSub] = useState<'new' | 'stretch' | 'migrated'>('new');
   const [q, setQ] = useState('');
@@ -212,7 +294,7 @@ export default function TokensTab() {
         <Column title="Final stretch" hint="bonding curve nearly full" items={L.stretch} solUsd={feed.solUsd} now={now} onOpen={setOpen} on={sub === 'stretch'} empty="Tokens close to migrating show up here as the feed watches them." />
         <Column title="Migrated" hint="just graduated" items={L.migrated} solUsd={feed.solUsd} now={now} onOpen={setOpen} on={sub === 'migrated'} empty="Waiting for the next migration…" />
       </div>
-      {open && <TokenSheet mint={open} seed={feed.find(open)} solUsd={feed.solUsd} onClose={() => setOpen(null)} />}
+      {open && <TokenSheet mint={open} seed={feed.find(open)} solUsd={feed.solUsd} me={me} onSaved={onSaved} goRobot={goRobot} onClose={() => setOpen(null)} />}
     </>
   );
 }

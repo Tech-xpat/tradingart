@@ -97,18 +97,19 @@ class Engine {
         for (const [m, t] of seen) if (Date.now() - t > 30 * 60 * 1000) seen.delete(m);
         const held = new Set(a.positions().map((p) => p.mint));
         let checked = 0, found = null;
-        for (const mint of collector.trackedMints()) {
+        const pool = ag.onlyMint ? [ag.onlyMint] : collector.trackedMints(); // a watcher plan looks at one coin; otherwise every young coin
+        for (const mint of pool) {
           if (held.has(mint) || seen.has(mint)) continue;
           const mk = collector.marketFor(mint);
           if (!mk) continue;
-          if (mk.ageSec < a.plan.minAgeSec || (a.plan.maxAgeSec != null && mk.ageSec > a.plan.maxAgeSec)) continue;
+          if (!ag.onlyMint && (mk.ageSec < a.plan.minAgeSec || (a.plan.maxAgeSec != null && mk.ageSec > a.plan.maxAgeSec))) continue;
           if (mk.marketCapUsd < ag.mcapMinUsd || (ag.mcapMaxUsd != null && mk.marketCapUsd > ag.mcapMaxUsd)) continue;
           checked += 1;
           const bars = charting.resample(collector.barsFor(mint), ag.tfSec);
           const r = charting.detect(ag.pattern, bars, ag);
           if (r.match) { found = { mint, r, mk }; break; }
         }
-        if (!found) { a.noteScan({ candidates: checked, matched: 0, outcome: checked ? `watching ${checked} coin${checked === 1 ? '' : 's'} in your range, no ${charting.PATTERN_LABELS[ag.pattern].toLowerCase()} yet` : 'no coins inside your age and market-cap range right now' }); continue; }
+        if (!found) { a.noteScan({ candidates: checked, matched: 0, outcome: checked ? (ag.onlyMint ? 'watching your coin: no' : `watching ${checked} coin${checked === 1 ? '' : 's'} in your range: no`) + ` ${charting.PATTERN_LABELS[ag.pattern].toLowerCase()} yet` : 'no coins inside your age and market-cap range right now' }); continue; }
         seen.set(found.mint, Date.now());
         const why = `agent:${ag.pattern}`;
         const res = await a.offer(found.mint, why);

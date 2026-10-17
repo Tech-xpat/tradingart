@@ -80,7 +80,7 @@ async def main():
                 import time
                 now = int(time.time()); path = [100]*3 + [100 - i*5 for i in range(1, 9)] + [60 + i*4 for i in range(1, 6)] + [80 - i*4 for i in range(1, 5)] + [64 + i*2 for i in range(1, 5)]
                 bars = [[now - (len(path) - i) * 5, p, p + 1, p - 1, p, 0.5, 1, 0] for i, p in enumerate(path)]
-                await route.fulfill(status=200, content_type="application/json", body=json.dumps({"chart": {"mint": MINT, "name": "Search Coin", "symbol": "SRC", "uri": None, "firstSeen": "2026-10-16T10:00:00Z", "mcapSol": 72, "vSol": 50, "migrated": False, "bars": bars, "updatedAt": "2026-10-16T10:05:00Z"}}))
+                await route.fulfill(status=200, content_type="application/json", body=json.dumps({"chart": {"mint": MINT, "name": "Search Coin", "symbol": "SRC", "uri": None, "firstSeen": "2026-10-16T10:00:00Z", "mcapSol": 72, "vSol": 50, "migrated": False, "bars": bars, "bars1m": [], "bars5m": [], "trades": [[int(time.time()*1000) - i*3000, "b" if i % 3 else "s", 0.5 + i*0.1, 70 + i, "Abcd…wxyz", "sig%d" % i] for i in range(12)], "updatedAt": "2026-10-16T10:05:00Z"}}))
             await pg.route("**/api/chart?**", chart)
             await pg.goto(BASE + "/app"); await pg.wait_for_timeout(1500)
             # --- tokens tab (default, works signed out) ---
@@ -110,7 +110,9 @@ async def main():
             await pg.get_by_label("Contract address").fill("not-an-address"); await pg.get_by_role("button", name="Search").click()
             await pg.wait_for_selector("text=Paste a full Solana token address")
             await pg.get_by_label("Contract address").fill(MINT); await pg.get_by_role("button", name="Search").click()
-            await pg.wait_for_selector("text=Search Coin"); await pg.wait_for_selector("canvas[aria-label='Price chart']"); assert await pg.locator("iframe").count() == 0 and await pg.locator("a[href*='dexscreener']").count() == 0, "no third-party chart or promo links"; await pg.get_by_role("tab", name="1m").click(); await pg.get_by_role("tab", name="1D").click(); await pg.get_by_role("tab", name="15s").click()
+            await pg.wait_for_selector("text=Search Coin"); await pg.wait_for_selector("canvas[aria-label='Price chart']"); assert await pg.locator("iframe").count() == 0 and await pg.locator("a[href*='dexscreener']").count() == 0, "no third-party chart or promo links"; await pg.wait_for_selector(".hrow.buy"); assert await pg.locator(".hrow.sell").count() >= 1, "history shows buys and sells"
+            await pg.get_by_role("button", name="Watch with my robot").click(); await pg.wait_for_selector("text=Connect your wallet and sign in first"); await pg.get_by_role("button", name="Close", exact=True).first.click() if False else None
+            await pg.get_by_role("tab", name="1m").click(); await pg.get_by_role("tab", name="1D").click(); await pg.get_by_role("tab", name="15s").click()
             cvb = await pg.locator("canvas[aria-label='Price chart']").bounding_box()
             await pg.get_by_label("Draw trend line").click()
             await pg.mouse.move(cvb["x"] + 80, cvb["y"] + 120); await pg.mouse.down(); await pg.mouse.move(cvb["x"] + 200, cvb["y"] + 80, steps=5); await pg.mouse.up()

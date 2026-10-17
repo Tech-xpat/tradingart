@@ -272,3 +272,15 @@ footer { padding: 26px 0 60px; color: var(--muted); font-size: 12px; max-width: 
 .trade.buy { color:#C6FF3D; background:#C6FF3D12; } .trade.sell { color:#ff5c6c; background:#ff5c6c12; }
 .trade span { text-align:right; color:#cfd3da; }
 @keyframes tradein { from { transform: translateY(-6px); opacity:0; } to { transform:none; opacity:1; } }
+
+.watchbox { border:1px solid var(--lime); border-radius:14px; padding:12px; margin: 0 0 12px; background:#0c110a; }
+.hist { margin-top:10px; border:1px solid var(--line); border-radius:12px; padding:8px; background:#07080c; }
+.histhead { display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin-bottom:6px; font-size:12px; }
+.histhead span { color:var(--muted); font-size:11px; }
+.hbody { max-height: 240px; overflow-y:auto; }
+.hrow { display:grid; grid-template-columns: 70px 42px 1fr 1fr 82px; gap:6px; font:500 11px var(--mono); padding:3px 4px; border-radius:6px; align-items:center; }
+.hrow span { text-align:right; color:#cfd3da; } .hrow span:first-child { text-align:left; color:var(--muted); }
+.hrow.buy b { color:#C6FF3D; } .hrow.sell b { color:#ff5c6c; }
+.hrow.buy { background:#C6FF3D0d; } .hrow.sell { background:#ff5c6c0d; }
+.hrow.hh { color:var(--muted); font-size:10px; text-transform:uppercase; background:none; }
+.hrow.hh span { color:var(--muted); }

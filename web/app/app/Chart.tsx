@@ -38,9 +38,9 @@ function combine(server: Bar[], local: Bar[]): Bar[] {
  * dollars or SOL, your own trend lines / horizontal lines / boxes (saved per coin, draggable), the pattern engine's marks,
  * and an animation of every buy and sell as it happens.
  */
-export default function Chart({ mint, tiers, solUsd, height = 340 }: { mint: string; tiers: Tiers; solUsd: number | null; height?: number }) {
+export default function Chart({ mint, tiers, solUsd, replay, height = 340 }: { mint: string; tiers: Tiers; solUsd: number | null; replay?: { side: string; sol: number; mcapSol: number; t: number }[]; height?: number }) {
   const cv = useRef<HTMLCanvasElement>(null);
-  const [tf, setTf] = useState(15);
+  const [tf, setTf] = useState(5);
   const [tool, setTool] = useState<Tool>('move');
   const [log, setLog] = useState(false);
   const [unit, setUnit] = useState<'usd' | 'sol'>('usd');
@@ -48,7 +48,6 @@ export default function Chart({ mint, tiers, solUsd, height = 340 }: { mint: str
   const [draws, setDraws] = useState<Draw[]>([]);
   const [sel, setSel] = useState<string | null>(null);
   const [readout, setReadout] = useState('');
-  const [tape, setTape] = useState<{ id: number; side: string; sol: number; mcapSol: number }[]>([]);
 
   const k = unit === 'usd' && solUsd ? solUsd : 1;
   const fmt = useCallback((p: number) => (unit === 'usd' && solUsd ? fmtUsd(p * solUsd) : `${p >= 100 ? p.toFixed(0) : p.toFixed(2)} SOL`), [unit, solUsd]);
@@ -68,18 +67,23 @@ export default function Chart({ mint, tiers, solUsd, height = 340 }: { mint: str
   const drag = useRef<null | { mode: 'pan' | 'new' | 'end' | 'move'; id?: string; end?: 'a' | 'b'; startX: number; startTR: number; last?: { t: number; p: number } }>(null);
   const pending = useRef<Draw | null>(null);
   const bubbles = useRef<{ x0: number; t: number; side: string; r: number; p: number; born: number }[]>([]);
+  const queue = useRef<{ side: string; sol: number; mcapSol: number; t: number }[]>([]);
+  const anim = useRef<{ c: number | null }>({ c: null });
+  const lastSpawn = useRef(0);
+  const replayed = useRef('');
   const seen = useRef(0);
   const sizeRef = useRef({ W: 0, H: height });
   const yr = useRef({ lo: 0, hi: 1 });
 
   useEffect(() => { // new candle size or coin: refit to the latest bars
     const bars = allRef.current; const last = bars.length ? bars[bars.length - 1][0] : Date.now() / 1000;
-    view.current = { tR: last + tf * 4, span: tf * Math.min(90, Math.max(30, bars.length || 60)), fit: true };
+    view.current = { tR: Math.max(Date.now() / 1000, last) + tf * 4, span: tf * (tf <= 15 ? 70 : tf <= 300 ? 80 : 60), fit: true };
   }, [tf, mint]);
-  useEffect(() => { // while following the live edge, keep the right edge on the newest candle
-    if (!view.current.fit || !all.length) return; view.current.tR = all[all.length - 1][0] + tf * 4;
-  }, [all, tf]);
-  useEffect(() => { seen.current = (getLocalTrades(mint).slice(-1)[0] || { id: 0 }).id; bubbles.current = []; }, [mint]);
+  useEffect(() => { seen.current = (getLocalTrades(mint).slice(-1)[0] || { id: 0 }).id; bubbles.current = []; queue.current = []; anim.current.c = null; replayed.current = ''; }, [mint]);
+  useEffect(() => { // on opening a coin, replay its recent trades as bubbles so there is movement straight away
+    if (!replay || !replay.length || replayed.current === mint) return; replayed.current = mint;
+    queue.current = replay.slice(0, 40).reverse().map((r) => ({ ...r }));
+  }, [replay, mint]);
 
   const X = (t: number) => ((t - (view.current.tR - view.current.span)) / view.current.span) * (sizeRef.current.W - PAD_R);
   const T = (x: number) => view.current.tR - view.current.span + (x / (sizeRef.current.W - PAD_R)) * view.current.span;
@@ -99,8 +103,16 @@ export default function Chart({ mint, tiers, solUsd, height = 340 }: { mint: str
       const g = c.getContext('2d'); if (!g || !W) return;
       g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
       const bars = allRef.current, v = view.current, plotW = W - PAD_R, pH = plotH();
+      if (v.fit) { const target = Math.max(Date.now() / 1000, bars.length ? bars[bars.length - 1][0] : 0) + tf * 4; v.tR = v.tR ? v.tR + (target - v.tR) * 0.12 : target; } // the chart scrolls with the clock
+      if (bars.length) { // the newest candle's close glides to the real price, so it moves like a live market
+        const raw = bars[bars.length - 1]; if (anim.current.c == null || !Number.isFinite(anim.current.c)) anim.current.c = raw[4];
+        anim.current.c += (raw[4] - anim.current.c) * 0.22;
+      }
       const tL = v.tR - v.span;
-      const vis = bars.filter((b) => b[0] + tf >= tL && b[0] <= v.tR);
+      const vis = bars.filter((b) => b[0] + tf >= tL && b[0] <= v.tR).map((b) => {
+        if (b !== bars[bars.length - 1] || anim.current.c == null) return b;
+        const c = anim.current.c; return [b[0], b[1], Math.max(b[2], c), Math.min(b[3], c), c, b[5], b[6], b[7]];
+      });
       if (!vis.length) { g.fillStyle = '#8a8f98'; g.font = '12px ui-monospace, monospace'; g.fillText('No candles in view. Drag to move, or pick another candle size.', 12, 28); return; }
       let lo = Infinity, hi = -Infinity, vmax = 0;
       for (const b of vis) { lo = Math.min(lo, b[3]); hi = Math.max(hi, b[2]); vmax = Math.max(vmax, b[5]); }
@@ -141,14 +153,15 @@ export default function Chart({ mint, tiers, solUsd, height = 340 }: { mint: str
         g.lineWidth = 1;
       }
       // live price line + pulse
-      const last = bars[bars.length - 1], ly = Y(last[4]);
+      const rawLast = bars[bars.length - 1], last = anim.current.c != null ? [rawLast[0], rawLast[1], rawLast[2], rawLast[3], anim.current.c, rawLast[5], rawLast[6], rawLast[7]] : rawLast, ly = Y(last[4]);
       if (ly > PAD_T && ly < H - AXIS_H) {
         const up = last[4] >= last[1]; g.strokeStyle = up ? GREEN : RED; g.setLineDash([2, 3]); g.beginPath(); g.moveTo(0, ly); g.lineTo(plotW, ly); g.stroke(); g.setLineDash([]);
         g.fillStyle = up ? GREEN : RED; g.fillRect(plotW, ly - 8, PAD_R, 16); g.fillStyle = '#0b0d10'; g.fillText(fmt(last[4]), plotW + 4, ly + 3);
         const lx = X(last[0] + tf / 2); if (lx > 0 && lx < plotW) { const pr = 3 + 3 * (0.5 + 0.5 * Math.sin(now / 250)); g.globalAlpha = 0.4; g.fillStyle = up ? GREEN : RED; g.beginPath(); g.arc(lx, Y(last[4]), pr + 2, 0, 7); g.fill(); g.globalAlpha = 1; g.beginPath(); g.arc(lx, Y(last[4]), 2.5, 0, 7); g.fill(); }
       }
-      // buy / sell animation: every trade pops out as a bubble that drifts up (buy) or down (sell) and fades
+      // buy / sell animation: every trade pops out as a bubble that drifts up (buy) or down (sell) and fades (recent history replays on open)
       const trades = getLocalTrades(mint);
+      if (queue.current.length && now - lastSpawn.current > 120) { const q = queue.current.shift()!; lastSpawn.current = now; bubbles.current.push({ x0: 0, t: Date.now(), side: q.side === 'b' || q.side === 'buy' ? 'buy' : 'sell', r: 3 + Math.min(16, Math.sqrt(q.sol) * 7), p: q.mcapSol, born: now }); }
       for (const tr of trades) if (tr.id > seen.current) { bubbles.current.push({ x0: 0, t: tr.t, side: tr.side, r: 3 + Math.min(16, Math.sqrt(tr.sol) * 7), p: tr.mcapSol, born: now }); seen.current = tr.id; }
       bubbles.current = bubbles.current.filter((b) => now - b.born < 1800);
       for (const b of bubbles.current) {
@@ -160,7 +173,7 @@ export default function Chart({ mint, tiers, solUsd, height = 340 }: { mint: str
       // crosshair
       const pt = pointer.current;
       if (pt && pt.x < plotW && !drag.current) { g.strokeStyle = '#3a3f4a'; g.setLineDash([2, 3]); g.beginPath(); g.moveTo(pt.x, PAD_T); g.lineTo(pt.x, H - AXIS_H); g.moveTo(0, pt.y); g.lineTo(plotW, pt.y); g.stroke(); g.setLineDash([]); g.fillStyle = '#2a2f3a'; g.fillRect(plotW, pt.y - 8, PAD_R, 16); g.fillStyle = '#e8eaee'; g.fillText(fmt(P(pt.y)), plotW + 4, pt.y + 3); }
-      if (now - tapeAt > 400) { tapeAt = now; const tl = getLocalTrades(mint); setTape(tl.slice(-12).reverse()); if (pt && pt.x < plotW) { const t = T(pt.x), b = bars.find((x) => t >= x[0] && t < x[0] + tf); setReadout(b ? `${fmtT(b[0], v.span < 300 ? 0 : v.span)} · O ${fmt(b[1])} H ${fmt(b[2])} L ${fmt(b[3])} C ${fmt(b[4])} · ${b[5].toFixed(2)} SOL · ${b[6]} buys / ${b[7]} sells` : `${fmt(P(pt.y))}`); } else if (last) setReadout(`${bars.length} candles · last ${fmt(last[4])}`); }
+      if (now - tapeAt > 300) { tapeAt = now; if (pt && pt.x < plotW) { const t = T(pt.x), b = bars.find((x) => t >= x[0] && t < x[0] + tf); setReadout(b ? `${fmtT(b[0], v.span < 300 ? 0 : v.span)} · O ${fmt(b[1])} H ${fmt(b[2])} L ${fmt(b[3])} C ${fmt(b[4])} · ${b[5].toFixed(2)} SOL · ${b[6]} buys / ${b[7]} sells` : `${fmt(P(pt.y))}`); } else if (last) setReadout(`${bars.length} candles · last ${fmt(last[4])}`); }
     };
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
@@ -227,9 +240,8 @@ export default function Chart({ mint, tiers, solUsd, height = 340 }: { mint: str
   useEffect(() => { const c = cv.current; if (!c) return; c.addEventListener('wheel', onWheel, { passive: false }); return () => c.removeEventListener('wheel', onWheel); }, [onWheel]);
 
   const zoom = (f: number) => { view.current.fit = false; view.current.span = clampSpan(view.current.span * f); };
-  const live = () => { const b = allRef.current; view.current.fit = true; if (b.length) view.current.tR = b[b.length - 1][0] + tf * 4; };
+  const live = () => { view.current.fit = true; };
   const delSel = () => { if (sel) { saveDraws(draws.filter((d) => d.id !== sel)); setSel(null); } };
-  const buys = tape.filter((t) => t.side === 'buy').reduce((s, t) => s + t.sol, 0), sells = tape.filter((t) => t.side === 'sell').reduce((s, t) => s + t.sol, 0);
   const covers = all.length ? `${all.length} candles · from ${fmtT(all[0][0], 0)}${all[0][0] < Date.now() / 1000 - 86400 ? ' (earlier days)' : ''}` : 'no candles yet';
 
   return (
@@ -263,10 +275,6 @@ export default function Chart({ mint, tiers, solUsd, height = 340 }: { mint: str
           <option value="double_bottom">Mark double bottom</option><option value="breakout">Mark breakout</option><option value="dip_buy">Mark dip + bounce</option><option value="volume_spike">Mark volume spike</option>
         </select>
         <span className="cfoot mono">{found?.match ? `● ${found.reason}` : 'no pattern right now'}</span>
-      </div>
-      <div className="tape" aria-label="Live trades">
-        <div className="pressure" title="Share of the last trades that were buys"><i style={{ width: `${buys + sells ? Math.round((buys / (buys + sells)) * 100) : 50}%` }} /></div>
-        {tape.length === 0 ? <div className="cfoot mono">{`Waiting for trades… ${covers}`}</div> : tape.map((t) => <div key={t.id} className={`trade ${t.side}`}><b>{t.side === 'buy' ? 'BUY' : 'SELL'}</b><span>{t.sol.toFixed(2)} SOL</span><span>{fmt(t.mcapSol)}</span></div>)}
       </div>
     </div>
   );

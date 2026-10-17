@@ -81,3 +81,25 @@ test('an agent plan watches live candles and enters on a double bottom inside it
   assert.strictEqual(sent.length, 1, 'no second entry on the same coin or the others');
   collector._reset();
 });
+
+test('a watcher plan looks at its one coin only, and ignores the age window', async () => {
+  const collector = require('../src/data/collector'); const { addTrade } = require('../src/charting');
+  const { sanitizePlan, HUNTER } = require('../src/planrules');
+  collector._reset(); collector.setSolUsd(200);
+  const mint = 'WatchMint11111111111111111111111111111111';
+  const plan = sanitizePlan({ ...HUNTER, id: 'w', minAgeSec: 100000, agent: { ...HUNTER.agent, mcapMinUsd: 1000, mcapMaxUsd: 100000, tfSec: 5, onlyMint: mint } });
+  assert.strictEqual(plan.agent.onlyMint, mint);
+  assert.strictEqual(sanitizePlan({ ...HUNTER, agent: { ...HUNTER.agent, onlyMint: 'not a mint' } }).agent.onlyMint, null);
+  const { eng, sent } = mkEngine([{ id: 'a', chat: 1, plans: [{ ...plan, id: 'w' }], plan: 'w' }]);
+  await eng.sync();
+  const mkPath = (...legs) => { const out = [legs[0]]; let p = legs[0]; for (let i = 1; i < legs.length; i += 2) { for (let s = 1; s <= legs[i]; s++) out.push(p + ((legs[i + 1] - p) * s) / legs[i]); p = legs[i + 1]; } return out; };
+  const feed = (m, closes) => { collector.onMessage({ txType: 'create', mint: m, name: 'X', marketCapSol: closes[0], vSolInBondingCurve: 40, solAmount: 1 }); const e = collector.barsFor(m); e.length = 0; closes.forEach((p, i) => addTrade(e, { t: Date.now() / 1000 - (closes.length - i) * 5, p, v: 1, side: i % 2 ? 'sell' : 'buy' })); };
+  const SHAPE = mkPath(100, 12, 60, 8, 80, 8, 61, 5, 66).map((x) => x * 0.3);
+  feed('OtherMint1111111111111111111111111111111111', SHAPE); // same shape, but not the watched coin
+  collector.onMessage({ txType: 'buy', mint: 'OtherMint1111111111111111111111111111111111', marketCapSol: SHAPE[SHAPE.length - 1], solAmount: 0.1 });
+  await eng.agentTick(); assert.strictEqual(sent.length, 0, 'other coins are ignored');
+  feed(mint, SHAPE); collector.onMessage({ txType: 'buy', mint, marketCapSol: SHAPE[SHAPE.length - 1], solAmount: 0.1 });
+  eng.accounts.get('a').nextAgentAt = 0; await eng.agentTick();
+  assert.strictEqual(sent.length, 1, JSON.stringify(sent)); assert.match(sent[0][1], /ENTERED WatchM/);
+  collector._reset();
+});

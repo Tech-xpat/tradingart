@@ -126,7 +126,7 @@ export default function Dashboard() {
             <button className="btn btn-ghost sm" onClick={signOut}>Sign out and switch</button></div>
         )}
 
-        {tab === 'tokens' && <TokensTab />}
+        {tab === 'tokens' && <TokensTab me={me} onSaved={refresh} goRobot={() => setTab('robot')} />}
         {tab === 'leaders' && <LeadersTab signedIn={auth === 'in'} me={me} refresh={refresh} say={say} goRobot={() => setTab('robot')} />}
 
         {tab === 'robot' && (

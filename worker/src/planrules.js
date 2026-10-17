@@ -12,7 +12,7 @@ const MAX_PLANS = 10;
  *  enters only when the chosen pattern shows up inside the market-cap range. Everything else in the plan (size, exits) still applies. */
 const PATTERNS = ['double_bottom', 'breakout', 'dip_buy', 'volume_spike'];
 const AGENT_TFS = [5, 15, 60, 300];
-const AGENT_OFF = { enabled: false, pattern: 'double_bottom', tfSec: 15, mcapMinUsd: 0, mcapMaxUsd: null, tolerancePct: 6, minDropPct: 25, bouncePct: 8, confirmPct: 2, trigger: 'confirm', lookbackBars: 120, volMult: 4 };
+const AGENT_OFF = { enabled: false, pattern: 'double_bottom', tfSec: 15, mcapMinUsd: 0, mcapMaxUsd: null, tolerancePct: 6, minDropPct: 25, bouncePct: 8, confirmPct: 2, trigger: 'confirm', lookbackBars: 120, volMult: 4, onlyMint: null };
 const HUNTER = { name: 'Bottom Hunter', sizeUsd: 7, minAgeSec: 120, maxAgeSec: 6 * 3600, takeProfitPct: 40, stopLossPct: 20, maxHoldMin: 20, scanEverySec: 10, maxTradesDay: 20, minLiqUsd: 0, minVol1hUsd: 0, minBuys1h: 0, requireRising: false,
   agent: { ...AGENT_OFF, enabled: true, mcapMinUsd: 8000, mcapMaxUsd: 100000 } };
 const num = (v, d) => { const n = Number(v); return Number.isFinite(n) ? n : d; };
@@ -37,6 +37,8 @@ function sanitizeAgent(a, base = AGENT_OFF) {
     trigger: a.trigger === 'neckline' ? 'neckline' : a.trigger === 'confirm' ? 'confirm' : base.trigger,
     lookbackBars: clamp(Math.round(num(a.lookbackBars, base.lookbackBars)), 20, 400),
     volMult: clamp(num(a.volMult, base.volMult), 1.5, 50),
+    // watch ONE coin only (its contract address); null = every young coin inside the market-cap range
+    onlyMint: a.onlyMint === undefined ? (base.onlyMint || null) : (typeof a.onlyMint === 'string' && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(a.onlyMint.trim()) ? a.onlyMint.trim() : null),
   };
 }
 
