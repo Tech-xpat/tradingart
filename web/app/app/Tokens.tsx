@@ -1,7 +1,8 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import Chart from './Chart';
-import { useLiveTokens, LIST_SIZE, curveProgress, type Tok, type FeedStatus } from '@/lib/liveTokens';
+import * as charting from '@/lib/charting';
+import { useLiveTokens, LIST_SIZE, curveProgress, getLocalBars, recordTrade, STREAM, type Tok, type FeedStatus } from '@/lib/liveTokens';
 import type { TokenView } from '@/lib/dex';
 import { riskOf, type Risk } from '@/lib/risk';
 import { api, Sheet, ago, usd } from './shared';
@@ -90,6 +91,19 @@ function TokenSheet({ mint, seed, solUsd, onClose }: { mint: string; seed: Tok |
     go(); const id = setInterval(go, 3000);
     return () => { stop = true; clearInterval(id); };
   }, [mint]);
+  // The page also listens to this one token's trades directly, so a chart always starts filling the moment the sheet opens.
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    let s: WebSocket | null = null, closed = false;
+    try {
+      s = new WebSocket(STREAM);
+      s.onopen = () => { try { s!.send(JSON.stringify({ method: 'subscribeTokenTrade', keys: [mint] })); } catch { /* ignore */ } };
+      s.onmessage = (e) => { try { const m = JSON.parse(String(e.data)); if (m && m.mint === mint) { recordTrade(m); } } catch { /* ignore */ } };
+    } catch { /* socket blocked: the robot's candles still load */ }
+    const id = setInterval(() => { if (!closed) setN((x) => x + 1); }, 2000);
+    return () => { closed = true; clearInterval(id); try { s?.close(); } catch { /* ignore */ } };
+  }, [mint]);
+  const bars = useMemo(() => charting.mergeBars(getLocalBars(mint), ch?.bars || []) as number[][], [mint, ch, n]); // eslint-disable-line react-hooks/exhaustive-deps
   // Tokens we have no recorded candles for (older than the robot's watch list) get plain market numbers from our server instead.
   useEffect(() => {
     if (!loaded || ch) return;
@@ -100,13 +114,13 @@ function TokenSheet({ mint, seed, solUsd, onClose }: { mint: string; seed: Tok |
   const name = ch?.name || tv?.name || seed?.name || 'Token', symbol = ch?.symbol || tv?.symbol || seed?.symbol;
   const image = tv?.imageUrl || seed?.image || null;
   const st = useMemo(() => {
-    if (!ch || !ch.bars.length) return null;
-    const bars = ch.bars, last = bars[bars.length - 1], now = Math.floor(Date.now() / 1000);
+    if (!bars.length) return null;
+    const last = bars[bars.length - 1], now = Math.floor(Date.now() / 1000);
     const at = (sec: number) => { const cut = now - sec; for (const b of bars) if (b[0] >= cut) return b[1]; return bars[0][1]; };
     let vol = 0, buys = 0, sells = 0; for (const b of bars) if (b[0] >= now - 3600) { vol += b[5]; buys += b[6]; sells += b[7]; }
     const m = (p: number) => (solUsd ? p * solUsd : null);
     return { mcap: m(last[4]), c5: (last[4] / at(300) - 1) * 100, c1h: (last[4] / at(3600) - 1) * 100, vol: m(vol), buys, sells, high: m(Math.max(...bars.map((b) => b[2]))), low: m(Math.min(...bars.map((b) => b[3]))) };
-  }, [ch, solUsd]);
+  }, [bars, solUsd]);
   return (
     <Sheet title={`${name}${symbol ? ` · $${symbol}` : ''}`} onClose={onClose} wide>
       <div className="thead">
@@ -128,7 +142,7 @@ function TokenSheet({ mint, seed, solUsd, onClose }: { mint: string; seed: Tok |
           <div className="cell"><span>Buys / sells 1h</span><b>{st.buys} / {st.sells}</b></div>
           <div className="cell"><span>High · Low</span><b>{usd(st.high)} · {usd(st.low)}</b></div>
           <div className="cell"><span>Stage</span><b>{ch?.migrated ? 'Migrated' : `Curve ${ch?.vSol != null ? Math.round(curveProgress(ch.vSol) * 100) : '–'}%`}</b></div>
-          <div className="cell"><span>Age</span><b>{ch?.firstSeen ? ago(Date.now() - Date.parse(ch.firstSeen)) : '–'}</b></div>
+          <div className="cell"><span>Age</span><b>{ch?.firstSeen ? ago(Date.now() - Date.parse(ch.firstSeen)) : seed ? ago(Date.now() - seed.createdAt) : '–'}</b></div>
         </div>
       ) : tv ? (
         <div className="grid4">
@@ -138,8 +152,9 @@ function TokenSheet({ mint, seed, solUsd, onClose }: { mint: string; seed: Tok |
           <div className="cell"><span>Change 1h</span><b className={tv.change.h1 >= 0 ? 'up' : 'dn'}>{tv.change.h1.toFixed(1)}%</b></div>
         </div>
       ) : null}
-      {ch && ch.bars.length > 1 ? <Chart bars={ch.bars} solUsd={solUsd} />
-        : <div className="coladd">{!loaded ? 'Loading chart…' : err || 'No candles recorded for this token yet. The robot records every token it sees launch, so the chart fills in from the moment it is seen. Older tokens have no history here.'}</div>}
+      {bars.length > 0 ? <Chart bars={bars} solUsd={solUsd} />
+        : <div className="coladd">{!loaded ? 'Loading chart…' : err || 'Listening for trades on this token. The chart starts the moment the next trade happens, and keeps building while you watch.'}</div>}
+      {bars.length > 0 && bars.length < 12 && <p className="hint">Only {bars.length} candle{bars.length === 1 ? '' : 's'} so far. Our charts are built from live trades, so a token we have just started watching has no earlier history.</p>}
       <p className="hint">Candles are built by our own robot from live trades. New tokens are extremely risky; a token shown here is not a recommendation.</p>
     </Sheet>
   );

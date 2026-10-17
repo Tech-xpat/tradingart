@@ -1,6 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { TokenView } from './dex';
+import * as charting from './charting';
 
 /**
  * Live Solana token feed for the Tokens tab.
@@ -17,6 +18,20 @@ export type Tok = {
 export type FeedStatus = 'connecting' | 'live' | 'fallback';
 
 export const LIST_SIZE = 20;
+export const STREAM = process.env.NEXT_PUBLIC_STREAM_URL || 'wss://pumpportal.fun/api/data';
+
+/** Candles this browser has built itself from the live trades it saw (market cap in SOL). The token page merges these with the robot's recorded candles. */
+const localBars = new Map<string, number[][]>();
+export const getLocalBars = (mint: string): number[][] => localBars.get(mint) || [];
+export function recordTrade(m: any) {
+  if (!m || typeof m.mint !== 'string') return;
+  const tx = m.txType; if (tx !== 'create' && tx !== 'buy' && tx !== 'sell') return;
+  let p = Number(m.marketCapSol);
+  if (!(p > 0)) { const sol = Number(m.solAmount), tok = Number(m.tokenAmount); p = sol > 0 && tok > 0 ? (sol / tok) * 1e9 : NaN; }
+  if (!(p > 0)) return;
+  let b = localBars.get(m.mint); if (!b) { if (localBars.size > 400) localBars.delete(localBars.keys().next().value as string); b = []; localBars.set(m.mint, b); }
+  charting.addTrade(b, { t: Date.now() / 1000, p, v: Number(m.solAmount) || 0, side: tx === 'create' ? 'buy' : tx }, 5, 720);
+}
 const CACHE_KEY = 'art:tokens:v2';
 const CACHE_MAX_AGE = 24 * 3600 * 1000;
 const STREAM_URL = process.env.NEXT_PUBLIC_STREAM_URL || 'wss://pumpportal.fun/api/data';
@@ -91,6 +106,7 @@ export function useLiveTokens() {
   const onMessage = useCallback((raw: unknown) => {
     let m: any; try { m = JSON.parse(String(raw)); } catch { return; }
     if (!m || typeof m !== 'object' || typeof m.mint !== 'string') return;
+    recordTrade(m);
     if (m.txType === 'create') {
       upsert(m.mint, (t) => {
         t.name = m.name || t.name; t.symbol = m.symbol || t.symbol; t.uri = typeof m.uri === 'string' && m.uri.length < 400 ? m.uri : t.uri; t.createdAt = Date.now();
