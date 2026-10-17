@@ -7,6 +7,7 @@ const { Account } = require('./trading/account');
 const { processWithdrawal } = require('./trading/withdraw');
 const charting = require('./charting');
 const collector = require('./data/collector');
+const health = require('./health');
 const { Keypair } = require('@solana/web3.js');
 
 class Engine {
@@ -170,7 +171,11 @@ class Engine {
 
   async heartbeat() {
     if (!this.db.heartbeat) return;
-    try { await this.db.heartbeat({ live_enabled: !!config.LIVE_TRADING_ENABLED, version: config.VERSION, accounts: this.accounts.size }); this.hbFailed = false; }
+    const row = { live_enabled: !!config.LIVE_TRADING_ENABLED, version: config.VERSION, accounts: this.accounts.size };
+    try {
+      try { await this.db.heartbeat({ ...row, checks: health.snapshot() }); }
+      catch (e) { if (!/checks/i.test(String(e.message))) throw e; await this.db.heartbeat(row); } // column not added yet: still report that we are alive
+      this.hbFailed = false; }
     catch (e) { if (!this.hbFailed) logger.warn(`heartbeat failed (run the art_worker SQL in supabase_art.sql): ${e.message}`); this.hbFailed = true; }
   }
 
@@ -178,6 +183,7 @@ class Engine {
     // A withdrawal left "processing" by a crash may or may not have been sent: never retry blindly.
     try { for (const r of await this.db.stuckWithdrawals()) await this.db.finishWithdrawal(r.id, { status: 'failed', error: 'worker restarted mid-send; check your wallet and vault balance before requesting again' }); } catch (e) { logger.warn('stuck withdrawals:', e.message); }
     await this.sync();
+    try { health.start(); } catch (e) { logger.warn('health:', e.message); }
     this.heartbeat(); this.timers.push(setInterval(() => this.heartbeat(), 15000));
     this.timers.push(setInterval(() => this.pinHeld(), 10000));
     this.timers.push(setInterval(() => this.sync(), config.SYNC_MS));

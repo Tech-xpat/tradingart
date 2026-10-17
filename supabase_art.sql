@@ -159,6 +159,8 @@ create index if not exists art_charts_updated_idx on public.art_charts (updated_
 create index if not exists art_charts_first_seen_idx on public.art_charts (first_seen desc);
 create index if not exists art_charts_vsol_idx on public.art_charts (v_sol desc);
 
+alter table public.art_worker add column if not exists checks jsonb;  -- what the robot can reach (RPC, trade builder, price feed), refreshed every minute
+
 do $$
 declare t text;
 begin

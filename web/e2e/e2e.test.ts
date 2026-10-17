@@ -270,6 +270,22 @@ test('leaderboard: everyone listed by default, ranked profit, profile, copy plan
   void meB;
 });
 
+test('board: new / final stretch / migrated / trending come from the robot\'s own records, and wallets are read in-app', async () => {
+  const now = Date.now(), iso = (ms: number) => new Date(ms).toISOString();
+  const mk = (n: string, over: any) => ({ mint: n.padEnd(44, 'A'), name: n, symbol: n.slice(0, 3), uri: null, created: true, first_seen: iso(now - 600e3), mcap_sol: 40, v_sol: 35, migrated: false, migrated_at: null, stats: { c5: 3, c1h: 9, volSol1h: 1, buys1h: 4, sells1h: 2 }, image: null, description: null, has_thumb: false, updated_at: iso(now - 20e3), ...over });
+  pg.tables.art_charts = [
+    mk('Fresh', {}), mk('NearGrad', { v_sol: 100, first_seen: iso(now - 3600e3) }), mk('HalfWay', { v_sol: 73 }), mk('Graduated', { migrated: true, migrated_at: iso(now - 60e3), v_sol: 115 }),
+    mk('Hotcoin', { stats: { c5: 40, c1h: 90, volSol1h: 50, buys1h: 80, sells1h: 60 } }), mk('Quiet', { stats: { c5: 0, c1h: 0, volSol1h: 0, buys1h: 0, sells1h: 0 }, updated_at: iso(now - 2 * 3600e3) }),
+  ];
+  const A = new Browser(); const j = (await A.call('/api/board')).json;
+  assert.ok(j.new.some((x: any) => x.name === 'Fresh'), 'new list has launches');
+  assert.deepStrictEqual(j.stretch.map((x: any) => x.name), ['NearGrad', 'HalfWay'], 'final stretch = past half way up the curve, closest first');
+  assert.deepStrictEqual(j.migrated.map((x: any) => x.name), ['Graduated']);
+  assert.strictEqual(j.trending[0].name, 'Hotcoin', 'trending ranks the busiest coin first'); assert.ok(!j.trending.some((x: any) => x.name === 'Quiet'));
+  assert.ok(j.topProgress > 0.8);
+  assert.strictEqual((await A.call('/api/wallet?addr=not-a-wallet')).status, 400);
+});
+
 test('panic pauses the robot and stamps panic_at for the worker', async () => {
   const w = mkWallet(); const b = new Browser(); await b.signIn(w);
   await b.call('/api/settings', { method: 'PATCH', body: { paused: false } });

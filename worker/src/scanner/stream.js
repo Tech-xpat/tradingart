@@ -11,6 +11,7 @@ const collector = require('../data/collector');
 const KEEP_MS = 6 * 60 * 60 * 1000;
 const MAX_KEEP = 1500;
 const mints = new Map(); // mint -> { at, kind: 'new'|'migrated', name, symbol }
+let lastMsgAt = 0;
 let ws = null, backoff = 1000, closed = false, timer = null;
 
 function remember(mint, kind, extra) {
@@ -21,6 +22,7 @@ function remember(mint, kind, extra) {
 }
 
 function onMessage(raw) {
+  lastMsgAt = Date.now();
   let m; try { m = JSON.parse(String(raw)); } catch (_) { return; }
   if (!m || typeof m !== 'object' || !m.mint) return;
   if (m.txType === 'create') { remember(m.mint, 'new', m); subscribeTrades([m.mint]); }
@@ -73,4 +75,5 @@ function recent(minAgeSec, maxAgeSec, limit = 60) {
 }
 function _feed(msg) { onMessage(JSON.stringify(msg)); } // tests
 
-module.exports = { start, stop, recent, subscribe: subscribeTrades, _feed, size: () => mints.size };
+const status = () => ({ connected: !!ws && ws.readyState === 1, lastMsgAgeSec: lastMsgAt ? Math.round((Date.now() - lastMsgAt) / 1000) : null });
+module.exports = { status, start, stop, recent, subscribe: subscribeTrades, _feed, size: () => mints.size };

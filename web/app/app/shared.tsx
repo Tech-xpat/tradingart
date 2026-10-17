@@ -11,7 +11,7 @@ export const AGENT_DEFAULT: Agent = { enabled: true, pattern: 'double_bottom', t
 export type Settings = { paused: boolean; live: boolean; max_position_sol: number; max_daily_loss_pct: number; max_concurrent: number; plans: Plan[]; active_plan: string | null; public_profile?: boolean; handle?: string | null; follow_user_id?: string | null };
 export type Me = {
   workerUnknown?: boolean;
-  worker: { online: boolean; liveEnabled: boolean; ageSec: number; version: string | null } | null;
+  worker: { online: boolean; liveEnabled: boolean; ageSec: number; version: string | null; checks?: { rpc?: { ok: boolean; ms?: number; error?: string }; tradeApi?: { ok: boolean; status?: number; error?: string }; feed?: { ok: boolean; connected: boolean; lastMsgAgeSec: number | null }; coins?: number; ownDataOnly?: boolean } | null } | null;
   wallet: string; telegramLinked: boolean; liveEnabled: boolean; solUsd: number | null;
   vault: { address: string; balanceSol: number | null } | null;
   settings: Settings;

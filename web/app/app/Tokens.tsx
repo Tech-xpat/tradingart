@@ -89,6 +89,36 @@ function Column({ title, hint, items, solUsd, now, onOpen, on, empty }: { title:
 type Tr = { t: number; side: 'buy' | 'sell'; sol: number; mcapSol: number; who?: string; sig?: string };
 type ChartRow = { trades?: any[];  name: string | null; symbol: string | null; firstSeen: string | null; mcapSol: number | null; vSol: number | null; migrated: boolean; bars: number[][]; bars1m: number[][]; bars5m: number[][]; updatedAt: string };
 
+/** A trader, inside the app: what they did on THIS coin (from the trades we recorded) plus public on-chain facts about the wallet. */
+function TraderPanel({ addr, trades, solUsd, onClose }: { addr: string; trades: Tr[]; solUsd: number | null; onClose: () => void }) {
+  const [w, setW] = useState<{ sol: number | null; tokens: number; holdings: { mint: string; amount: number }[]; recent: { t: number | null; ok: boolean }[] } | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => { let stop = false; setW(null); setErr(null); api<any>(`/api/wallet?addr=${addr}`).then((r) => { if (!stop) setW(r); }, (e) => { if (!stop) setErr(e?.message || 'Could not load this wallet'); }); return () => { stop = true; }; }, [addr]);
+  const mine = trades.filter((x) => x.who === addr);
+  const bought = mine.filter((x) => x.side === 'buy').reduce((a, x) => a + x.sol, 0), sold = mine.filter((x) => x.side === 'sell').reduce((a, x) => a + x.sol, 0);
+  const net = sold - bought;
+  return (
+    <div className="trader">
+      <div className="histhead"><b className="mono">{short(addr)}</b><button className="btn btn-ghost sm" onClick={onClose}>Close</button></div>
+      <div className="grid4">
+        <div className="cell"><span>Bought here</span><b>{bought.toFixed(2)} SOL</b></div>
+        <div className="cell"><span>Sold here</span><b>{sold.toFixed(2)} SOL</b></div>
+        <div className="cell"><span>Net on this coin</span><b className={net >= 0 ? 'up' : 'dn'}>{net >= 0 ? '+' : ''}{net.toFixed(2)} SOL</b></div>
+        <div className="cell"><span>Trades here</span><b>{mine.length}</b></div>
+      </div>
+      {err ? <p className="hint warn">{err}</p> : !w ? <p className="hint">Reading the wallet…</p> : (
+        <div className="grid4">
+          <div className="cell"><span>Wallet balance</span><b>{w.sol != null ? `${w.sol.toFixed(2)} SOL` : '–'}{w.sol != null && solUsd ? ` · ${usd(w.sol * solUsd)}` : ''}</b></div>
+          <div className="cell"><span>Tokens held</span><b>{w.tokens}</b></div>
+          <div className="cell"><span>Last activity</span><b>{w.recent[0]?.t ? ago(Date.now() - w.recent[0].t) + ' ago' : '–'}</b></div>
+          <div className="cell"><span>Last 12 txs</span><b>{w.recent.filter((x) => x.ok).length} ok · {w.recent.filter((x) => !x.ok).length} failed</b></div>
+        </div>
+      )}
+      <p className="hint">Public blockchain data. Past results of a wallet do not predict what it will do next.</p>
+    </div>
+  );
+}
+
 /** "Watch with my robot": a one-coin plan. The robot's chart agent looks for the pattern and enters even while you are away. */
 function WatchPanel({ mint, symbol, mcapUsd, me, onSaved, goRobot, onClose }: { mint: string; symbol: string | null | undefined; mcapUsd: number | null; me: Me | null; onSaved: () => Promise<unknown>; goRobot: () => void; onClose: () => void }) {
   const lim = me?.limits;
@@ -146,6 +176,7 @@ function WatchPanel({ mint, symbol, mcapUsd, me, onSaved, goRobot, onClose }: { 
 
 function TokenSheet({ mint, seed, solUsd, me, onSaved, goRobot, onClose }: { mint: string; seed: Tok | null; solUsd: number | null; me: Me | null; onSaved: () => Promise<unknown>; goRobot: () => void; onClose: () => void }) {
   const [watch, setWatch] = useState(false);
+  const [trader, setTrader] = useState<string | null>(null);
   const [ch, setCh] = useState<ChartRow | null>(null);
   const [tv, setTv] = useState<TokenView | null>(seed?.dex || null);
   const [err, setErr] = useState<string | null>(null);
@@ -250,8 +281,9 @@ function TokenSheet({ mint, seed, solUsd, me, onSaved, goRobot, onClose }: { min
       <div className="hist" aria-label="Trade history">
         <div className="histhead"><b>Trades by everyone</b><span className="mono">{trades.length ? `${recent.filter((x) => x.side === 'buy').length} buys · ${recent.filter((x) => x.side === 'sell').length} sells (last ${recent.length})` : 'waiting for the first trade'}</span></div>
         <div className="pressure" title="Share of recent SOL that was buying"><i style={{ width: `${bs + ss ? Math.round((bs / (bs + ss)) * 100) : 50}%` }} /></div>
+        {trader && <TraderPanel addr={trader} trades={trades} solUsd={solUsd} onClose={() => setTrader(null)} />}
         <div className="hrow hh"><span>Time</span><span>Type</span><span>SOL</span><span>Market cap</span><span>Trader</span></div>
-        <div className="hbody">{trades.map((x, i) => <div key={`${x.sig || x.t}-${i}`} className={`hrow ${x.side}`}><span>{new Date(x.t).toLocaleTimeString([], { hour12: false })}</span><b>{x.side === 'buy' ? 'BUY' : 'SELL'}</b><span>{x.sol.toFixed(2)}</span><span>{solUsd ? usd(x.mcapSol * solUsd) : `${x.mcapSol.toFixed(1)} SOL`}</span><span className="mono">{x.who || '–'}</span></div>)}</div>
+        <div className="hbody">{trades.map((x, i) => <div key={`${x.sig || x.t}-${i}`} className={`hrow ${x.side}`}><span>{new Date(x.t).toLocaleTimeString([], { hour12: false })}</span><b>{x.side === 'buy' ? 'BUY' : 'SELL'}</b><span>{x.sol.toFixed(2)}</span><span>{solUsd ? usd(x.mcapSol * solUsd) : `${x.mcapSol.toFixed(1)} SOL`}</span>{x.who ? <button className="who" onClick={() => setTrader(x.who!)} aria-label={`Open trader ${short(x.who)}`}>{short(x.who)}</button> : <span>–</span>}</div>)}</div>
       </div>
       <p className="hint">Candles are built by our own robot from live trades. New tokens are extremely risky; a token shown here is not a recommendation.</p>
     </Sheet>
@@ -284,6 +316,20 @@ export default function TokensTab({ me, onSaved, goRobot }: { me: Me | null; onS
         <span className={`feedstat ${feed.status}`} title={feed.status === 'fallback' ? 'The live socket could not connect, so this list refreshes every 20 seconds from our server.' : ''}><i />{STATUS_TEXT[feed.status]}</span>
       </div>
       {msg && <div className="note err" role="alert">{msg}</div>}
+      {feed.hot.length > 0 && (
+        <>
+          <div className="trendhead">🔥 Trending now <small className="mono" style={{ color: 'var(--muted)', textTransform: 'none', fontWeight: 500 }}>most trades in the last hour · swipe →</small></div>
+          <div className="trend" role="list" aria-label="Trending coins">
+            {feed.hot.map((h) => (
+              <button key={h.mint} role="listitem" className="tchip" onClick={() => setOpen(h.mint)} aria-label={`Open trending ${h.symbol || h.name || h.mint}`}>
+                <Avatar t={{ mint: h.mint, thumb: h.thumb, image: h.image, symbol: h.symbol, name: h.name }} />
+                <b>{h.symbol ? `$${h.symbol}` : h.name || 'Token'}</b>
+                <small>{feed.solUsd && h.mcapSol ? usd(h.mcapSol * feed.solUsd) : '–'} · <span className={h.c5 >= 0 ? 'up' : 'dn'}>{h.c5 >= 0 ? '+' : ''}{h.c5.toFixed(0)}%</span> · {h.trades} tx</small>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
       <div className="subtabs" role="tablist">
         <button role="tab" aria-selected={sub === 'new'} className={sub === 'new' ? 'on' : ''} onClick={() => setSub('new')}>New<u>{L.new.length}</u></button>
         <button role="tab" aria-selected={sub === 'stretch'} className={sub === 'stretch' ? 'on' : ''} onClick={() => setSub('stretch')}>Final stretch<u>{L.stretch.length}</u></button>
@@ -291,7 +337,7 @@ export default function TokensTab({ me, onSaved, goRobot }: { me: Me | null; onS
       </div>
       <div className="cols">
         <Column title="New" hint={`latest ${LIST_SIZE} launches`} items={L.new} solUsd={feed.solUsd} now={now} onOpen={setOpen} on={sub === 'new'} empty="Waiting for the next launch…" />
-        <Column title="Final stretch" hint="bonding curve nearly full" items={L.stretch} solUsd={feed.solUsd} now={now} onOpen={setOpen} on={sub === 'stretch'} empty="Tokens close to migrating show up here as the feed watches them." />
+        <Column title="Final stretch" hint="past half way to migrating" items={L.stretch} solUsd={feed.solUsd} now={now} onOpen={setOpen} on={sub === 'stretch'} empty={feed.topProgress != null ? `Nothing past half way up the curve yet. The robot is watching every launch; the closest coin is at ${Math.round(feed.topProgress * 100)}%. Coins appear here the moment they pass 50%.` : "Coins past half way up the curve show up here as the robot watches them climb."} />
         <Column title="Migrated" hint="just graduated" items={L.migrated} solUsd={feed.solUsd} now={now} onOpen={setOpen} on={sub === 'migrated'} empty="Waiting for the next migration…" />
       </div>
       {open && <TokenSheet mint={open} seed={feed.find(open)} solUsd={feed.solUsd} me={me} onSaved={onSaved} goRobot={goRobot} onClose={() => setOpen(null)} />}

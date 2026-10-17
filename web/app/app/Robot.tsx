@@ -37,6 +37,29 @@ const NumField = ({ label, value, onChange, step, suffix, aria }: { label: strin
   </div>
 );
 
+type Check = { ok: boolean | null; label: string; fix?: string };
+/** A plain checklist of everything a real trade needs, so "why is it not trading?" has an answer on screen. */
+function readiness(me: Me, active: Plan | undefined): { checks: Check[]; ready: boolean } {
+  const w = me.worker, c = w?.checks || null, s = me.settings, bal = me.vault?.balanceSol ?? null, minV = me.limits.minVaultSolForLive;
+  const price = me.solUsd || null;
+  const wantSol = active && price ? active.sizeUsd / price : null;
+  const usable = bal != null ? Math.max(0, bal - 0.006) * 0.95 : null;
+  const cap = me.consent?.limits.maxPositionSol ?? null;
+  const tradeSol = wantSol != null && usable != null ? Math.min(wantSol, cap ?? Infinity, usable) : null;
+  const checks: Check[] = [
+    { ok: me.workerUnknown ? null : !!w?.online, label: 'Robot service is running', fix: 'Owner: the Railway worker is not reporting in. Open its logs and redeploy.' },
+    { ok: c?.feed ? c.feed.ok : null, label: 'Live price feed connected', fix: 'The robot cannot see new trades yet. It reconnects by itself; if this stays red, check the worker logs.' },
+    { ok: c?.tradeApi ? c.tradeApi.ok : null, label: 'Trade builder reachable', fix: 'The robot cannot build swaps right now, so it cannot buy. Check the worker logs.' },
+    { ok: c?.rpc ? c.rpc.ok : null, label: 'Solana network reachable', fix: 'The free RPC nodes are failing. Add another endpoint in RPC_URLS on Railway.' },
+    { ok: !!me.consent, label: 'Safety limits signed', fix: 'Sign your limits on this tab.' },
+    { ok: !!me.vault, label: 'Vault created', fix: 'Create your vault first.' },
+    { ok: bal == null ? null : bal >= minV, label: `Vault holds at least ${minV} SOL${bal != null ? ` (now ${bal.toFixed(4)})` : ''}`, fix: `Deposit more. The robot needs at least ${minV} SOL for a real trade.` },
+    { ok: tradeSol == null ? null : tradeSol >= 0.01, label: tradeSol != null ? `Trade size works (about ${tradeSol.toFixed(3)} SOL per trade)` : 'Trade size works', fix: 'Each trade must be at least 0.01 SOL after the fee reserve. Raise the vault balance, the trade size, or your signed max position.' },
+  ];
+  if (s.live) { checks.splice(1, 0, { ok: me.liveEnabled && !!w?.liveEnabled, label: 'Live trading switched on (site and server)', fix: 'Owner: set LIVE_ENABLED=true on Vercel and LIVE_TRADING_ENABLED=true on Railway, then redeploy both.' }); }
+  return { checks, ready: checks.every((x) => x.ok !== false) };
+}
+
 const win = (p: Plan) => {
   const f = (s: number) => (s >= 86400 ? `${+(s / 86400).toFixed(2)}d` : s >= 3600 ? `${+(s / 3600).toFixed(2)}h` : s >= 60 ? `${+(s / 60).toFixed(2)}m` : `${s}s`);
   return `${f(p.minAgeSec)} to ${p.maxAgeSec == null ? 'any age' : f(p.maxAgeSec)}`;
@@ -169,6 +192,18 @@ export default function RobotTab({ me, refresh, run, busy, say, sign, openSheet 
               onClick={() => patch('toggle', { paused: running }, running ? 'Robot paused. Open trades still follow their exits.' : 'Robot started.')}><i /></button>
           </div>
         )}
+
+        {(phase === 'running' || phase === 'ready') && (() => {
+          const r = readiness(me, active);
+          const bad = r.checks.filter((x) => x.ok === false).length;
+          return (
+            <details className={`ready ${r.ready ? 'good' : 'bad'}`} open={!r.ready}>
+              <summary>{r.ready ? `✓ Ready to trade ${isLive ? 'live' : 'in practice mode'}` : `✕ ${bad} thing${bad === 1 ? '' : 's'} to fix before it can trade ${isLive ? 'live' : ''}`}</summary>
+              <ul>{r.checks.map((x, i) => <li key={i} className={x.ok === false ? 'no' : x.ok ? 'yes' : 'unk'}><i>{x.ok === false ? '✕' : x.ok ? '✓' : '…'}</i><span>{x.label}{x.ok === false && x.fix ? <em>{x.fix}</em> : null}</span></li>)}</ul>
+              {!isLive && <p className="hint">You are in practice mode: fills are simulated. Switch to Live in the limits section when you want real trades.</p>}
+            </details>
+          );
+        })()}
 
         {(phase === 'running' || phase === 'ready') && trades?.status && (
           <div className="scanline" aria-live="polite">

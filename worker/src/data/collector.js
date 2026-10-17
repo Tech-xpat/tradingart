@@ -49,7 +49,7 @@ function onMessage(m) {
   e.lastAt = Date.now(); e.trades += 1; e.dirty = true;
   const tr = { t: e.lastAt / 1000, p: mcap, v: Number(m.solAmount) || 0, side: tx === 'create' ? 'buy' : tx };
   addTrade(e.bars, tr, BASE, MAX_BARS);
-  if (tx !== 'create') { e.tape.push([e.lastAt, tx === 'sell' ? 's' : 'b', +(Number(m.solAmount) || 0).toFixed(4), +mcap.toFixed(3), typeof m.traderPublicKey === 'string' ? `${m.traderPublicKey.slice(0, 4)}…${m.traderPublicKey.slice(-4)}` : '', typeof m.signature === 'string' ? m.signature.slice(0, 10) : '']); if (e.tape.length > 80) e.tape.shift(); }
+  if (tx !== 'create') { e.tape.push([e.lastAt, tx === 'sell' ? 's' : 'b', +(Number(m.solAmount) || 0).toFixed(4), +mcap.toFixed(3), typeof m.traderPublicKey === 'string' && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(m.traderPublicKey) ? m.traderPublicKey : '', typeof m.signature === 'string' ? m.signature.slice(0, 10) : '']); if (e.tape.length > 80) e.tape.shift(); }
   addTrade(e.m1, tr, 60, 360); // 6 hours of 1-minute candles
   addTrade(e.m5, tr, 300, 864); // 3 days of 5-minute candles, for the zoomed-out views
   if (tokens.size > MAX_TOKENS + 20) evict();
@@ -65,7 +65,8 @@ const trackedMints = () => [...tokens.keys()];
 function marketFor(mint, now = Date.now()) {
   const e = tokens.get(mint);
   // only coins we saw being created have a trustworthy age; for anything else the caller falls back to another source
-  if (!e || !e.created || !e.mcapSol || now - e.lastAt > FRESH_MS) return null;
+  // a coin we HOLD keeps its last known price for up to 10 minutes of silence, so a quiet coin can still be exited by stop loss / take profit
+  if (!e || !e.created || !e.mcapSol || now - e.lastAt > (pinned.has(mint) ? 10 * FRESH_MS : FRESH_MS)) return null;
   const ago = (sec) => { const cut = Math.floor(now / 1000) - sec; let ref = null; for (const b of e.bars) { if (b[0] >= cut) { ref = b[1]; break; } } return ref; };
   const chg = (ref) => (ref > 0 ? ((e.mcapSol - ref) / ref) * 100 : 0);
   const hourCut = Math.floor(now / 1000) - 3600;

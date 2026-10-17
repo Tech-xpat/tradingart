@@ -16,6 +16,7 @@ export type Tok = {
   mcapSol: number | null; progress: number | null; volSol: number; buys: number; sells: number; lastAt: number; dex: TokenView | null;
   own?: { c5: number; c1h: number } | null; thumb?: boolean; fromServer?: boolean;
 };
+export type Hot = { mint: string; name: string | null; symbol: string | null; thumb: boolean; image: string | null; mcapSol: number | null; c5: number; trades: number };
 export type FeedStatus = 'connecting' | 'live' | 'fallback';
 
 export const LIST_SIZE = 20;
@@ -40,12 +41,12 @@ export function recordTrade(m: any) {
   let b = localBars.get(m.mint); if (!b) { if (localBars.size > 400) localBars.delete(localBars.keys().next().value as string); b = []; localBars.set(m.mint, b); }
   charting.addTrade(b, { t: Date.now() / 1000, p, v: Number(m.solAmount) || 0, side: tx === 'create' ? 'buy' : tx }, 5, 720);
   let l = localTrades.get(m.mint); if (!l) { if (localTrades.size > 120) localTrades.delete(localTrades.keys().next().value as string); l = []; localTrades.set(m.mint, l); }
-  l.push({ id: ++tradeSeq, t: Date.now(), side: tx === 'sell' ? 'sell' : 'buy', sol: Number(m.solAmount) || 0, mcapSol: p, who: typeof m.traderPublicKey === 'string' ? `${m.traderPublicKey.slice(0, 4)}…${m.traderPublicKey.slice(-4)}` : undefined, sig: typeof m.signature === 'string' ? m.signature.slice(0, 10) : undefined }); if (l.length > 80) l.shift();
+  l.push({ id: ++tradeSeq, t: Date.now(), side: tx === 'sell' ? 'sell' : 'buy', sol: Number(m.solAmount) || 0, mcapSol: p, who: typeof m.traderPublicKey === 'string' ? m.traderPublicKey : undefined, sig: typeof m.signature === 'string' ? m.signature.slice(0, 10) : undefined }); if (l.length > 80) l.shift();
 }
 const CACHE_KEY = 'art:tokens:v2';
 const CACHE_MAX_AGE = 24 * 3600 * 1000;
 const STREAM_URL = process.env.NEXT_PUBLIC_STREAM_URL || 'wss://pumpportal.fun/api/data';
-const FINAL_STRETCH = 0.6;
+const FINAL_STRETCH = 0.5;
 const MAX_TRACKED = 160;
 
 /** Bonding-curve progress from the virtual SOL reserve (starts ~30, graduates ~115). Approximate by nature. */
@@ -63,6 +64,8 @@ export function useLiveTokens() {
   const [tick, setTick] = useState(0);
   const [status, setStatus] = useState<FeedStatus>('connecting');
   const [solUsd, setSolUsd] = useState<number | null>(null);
+  const [hot, setHot] = useState<Hot[]>([]);
+  const [topProgress, setTopProgress] = useState<number | null>(null);
   const failures = useRef(0);
   const metaQ = useRef<string[]>([]); const metaBusy = useRef(0); const metaTries = useRef(new Map<string, number>());
 
@@ -204,7 +207,9 @@ export function useLiveTokens() {
             if (!x.thumb && !t.image && t.uri) { metaQ.current.push(x.mint); }
           }
         };
-        apply(j.new); apply(j.stretch); apply(j.migrated);
+        apply(j.new); apply(j.stretch); apply(j.migrated); apply(j.trending);
+        setHot((j.trending || []).map((x: any) => ({ mint: x.mint, name: x.name, symbol: x.symbol, thumb: !!x.thumb, image: x.image, mcapSol: x.mcapSol, c5: x.stats?.c5 || 0, trades: (x.stats?.buys1h || 0) + (x.stats?.sells1h || 0) })));
+        setTopProgress(typeof j.topProgress === 'number' ? j.topProgress : null);
         touch(); pumpMeta();
       } catch { /* the live socket still works */ }
     };
@@ -262,5 +267,5 @@ export function useLiveTokens() {
   }, []);
 
   const find = useCallback((mint: string) => store.current.get(mint) || null, []);
-  return { status, lists, solUsd, find, tick };
+  return { status, lists, solUsd, find, tick, hot, topProgress };
 }

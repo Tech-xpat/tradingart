@@ -31,7 +31,7 @@ export function startFakePostgrest(port: number) {
       const [op, ...rest] = v.split('.'); const val = rest.join('.');
       const eq = (r: Row) => String(r[k]) === val;
       if (op === 'eq') conds.push(eq);
-      else if (op === 'gte') conds.push((r) => String(r[k]) >= val);
+      else if (op === 'gte') conds.push((r) => (typeof r[k] === 'number' && val !== '' && !isNaN(Number(val)) ? r[k] >= Number(val) : String(r[k]) >= val));
       else if (op === 'neq') conds.push((r) => !eq(r));
       else if (op === 'is') conds.push((r) => (val === 'null' ? r[k] == null : r[k] === (val === 'true')));
       else if (op === 'in') { const set = val.replace(/^\(|\)$/g, '').split(',').map((s) => s.replace(/^"|"$/g, '')); conds.push((r) => set.includes(String(r[k]))); }
