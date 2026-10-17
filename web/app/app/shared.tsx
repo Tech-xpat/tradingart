@@ -4,7 +4,10 @@ import { useEffect, type ReactNode } from 'react';
 export type Plan = {
   id: string; name: string; sizeUsd: number; minAgeSec: number; maxAgeSec: number | null; takeProfitPct: number; stopLossPct: number;
   maxHoldMin: number; scanEverySec: number; maxTradesDay: number; minLiqUsd: number; minVol1hUsd: number; minBuys1h: number; requireRising: boolean;
+  agent?: Agent;
 };
+export type Agent = { enabled: boolean; pattern: 'double_bottom' | 'breakout' | 'dip_buy' | 'volume_spike'; tfSec: number; mcapMinUsd: number; mcapMaxUsd: number | null; tolerancePct: number; minDropPct: number; bouncePct: number; confirmPct: number; trigger: 'confirm' | 'neckline'; lookbackBars: number; volMult: number };
+export const AGENT_DEFAULT: Agent = { enabled: true, pattern: 'double_bottom', tfSec: 15, mcapMinUsd: 8000, mcapMaxUsd: 100000, tolerancePct: 6, minDropPct: 25, bouncePct: 8, confirmPct: 2, trigger: 'confirm', lookbackBars: 120, volMult: 4 };
 export type Settings = { paused: boolean; live: boolean; max_position_sol: number; max_daily_loss_pct: number; max_concurrent: number; plans: Plan[]; active_plan: string | null; public_profile?: boolean; handle?: string | null; follow_user_id?: string | null };
 export type Me = {
   workerUnknown?: boolean;

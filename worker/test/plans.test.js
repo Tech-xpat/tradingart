@@ -47,3 +47,13 @@ test('the live stream remembers new and migrated mints and filters by age window
   assert.strictEqual(stream.recent(0, 60).length, 2);
   assert.strictEqual(stream.recent(3600, null).length, 0, 'nothing is an hour old yet');
 });
+
+test('agent settings are sanitised: unknown patterns, odd timeframes and backwards market-cap ranges are pulled back', () => {
+  const { sanitizePlan, HUNTER, sanitizeAgent } = require('../src/planrules');
+  const a = sanitizeAgent({ enabled: 1, pattern: 'rug_pull', tfSec: 7, mcapMinUsd: 50000, mcapMaxUsd: 1000, tolerancePct: 99, minDropPct: -5, trigger: 'x', lookbackBars: 5, volMult: 0 });
+  assert.strictEqual(a.enabled, true); assert.strictEqual(a.pattern, 'double_bottom'); assert.strictEqual(a.tfSec, 15); assert.strictEqual(a.mcapMaxUsd, null, 'max below min is dropped');
+  assert.strictEqual(a.tolerancePct, 25); assert.strictEqual(a.minDropPct, 5); assert.strictEqual(a.trigger, 'confirm'); assert.strictEqual(a.lookbackBars, 20); assert.strictEqual(a.volMult, 1.5);
+  const p = sanitizePlan({ ...HUNTER, agent: { ...HUNTER.agent, mcapMinUsd: 12000, mcapMaxUsd: 90000, tfSec: 60, pattern: 'breakout' } });
+  assert.strictEqual(p.agent.enabled, true); assert.strictEqual(p.agent.mcapMinUsd, 12000); assert.strictEqual(p.agent.tfSec, 60); assert.strictEqual(p.agent.pattern, 'breakout');
+  assert.strictEqual(sanitizePlan({ name: 'plain' }).agent.enabled, false, 'ordinary plans carry a switched-off agent');
+});

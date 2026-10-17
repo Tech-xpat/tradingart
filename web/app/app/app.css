@@ -108,7 +108,13 @@ p { margin: 0 0 12px; color: var(--muted); }
 .cell span { display:block; font: 500 10.5px var(--mono); letter-spacing:.09em; text-transform:uppercase; color: var(--muted); }
 .cell b { font: 600 15px var(--mono); }
 .chartbox { border:1px solid var(--line); border-radius: 14px; overflow:hidden; background:#07080c; height: 420px; }
-.chartbox iframe { width:100%; height:100%; border:0; }
+.chartbox.own { height:auto; padding:8px; }
+.chead { display:flex; justify-content:space-between; gap:8px; align-items:center; margin-bottom:6px; }
+.tfs { display:flex; gap:4px; } .tfs button { font:600 11px var(--mono); padding:4px 9px; border-radius:8px; border:1px solid var(--line); color:var(--muted); }
+.tfs button.on { color:#0b0d10; background:var(--lime); border-color:var(--lime); }
+.chead select { background:#0d0f14; color:var(--muted); border:1px solid var(--line); border-radius:8px; padding:4px 6px; font:500 11px var(--mono); }
+.cfoot { font-size:11px; color:var(--muted); min-height:16px; padding-top:4px; }
+.agentbox { margin-top:14px; padding:12px; border:1px solid var(--line); border-radius:12px; background:#0a0c10; }
 .links { display:flex; gap:8px; flex-wrap:wrap; margin-top: 12px; }
 .addr { display:flex; gap:10px; align-items:center; border:1px solid var(--line); border-radius:12px; padding: 9px 12px; background: rgba(255,255,255,.03); font: 400 12.5px var(--mono); word-break: break-all; margin: 10px 0; }
 

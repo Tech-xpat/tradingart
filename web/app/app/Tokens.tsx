@@ -1,6 +1,7 @@
 'use client';
-import { useEffect, useState } from 'react';
-import { useLiveTokens, LIST_SIZE, type Tok, type FeedStatus } from '@/lib/liveTokens';
+import { useEffect, useMemo, useState } from 'react';
+import Chart from './Chart';
+import { useLiveTokens, LIST_SIZE, curveProgress, type Tok, type FeedStatus } from '@/lib/liveTokens';
 import type { TokenView } from '@/lib/dex';
 import { riskOf, type Risk } from '@/lib/risk';
 import { api, Sheet, ago, usd } from './shared';
@@ -72,19 +73,40 @@ function Column({ title, hint, items, solUsd, now, onOpen, on, empty }: { title:
   );
 }
 
-function TokenSheet({ mint, seed, onClose }: { mint: string; seed: Tok | null; onClose: () => void }) {
+type ChartRow = { name: string | null; symbol: string | null; firstSeen: string | null; mcapSol: number | null; vSol: number | null; migrated: boolean; bars: number[][]; updatedAt: string };
+
+function TokenSheet({ mint, seed, solUsd, onClose }: { mint: string; seed: Tok | null; solUsd: number | null; onClose: () => void }) {
+  const [ch, setCh] = useState<ChartRow | null>(null);
   const [tv, setTv] = useState<TokenView | null>(seed?.dex || null);
   const [err, setErr] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
   const [copied, setCopied] = useState(false);
   useEffect(() => {
     let stop = false;
-    const go = async () => { try { const r = await api<{ token: TokenView }>(`/api/token?mint=${mint}`); if (!stop) { setTv(r.token); setErr(null); } } catch (e: any) { if (!stop) setErr(e?.message || 'Could not load'); } };
-    go(); const id = setInterval(go, 8000);
+    const go = async () => {
+      try { const r = await api<{ chart: ChartRow | null }>(`/api/chart?mint=${mint}`); if (!stop) { setCh(r.chart); setErr(null); } } catch (e: any) { if (!stop) setErr(e?.message || 'Could not load'); }
+      if (!stop) setLoaded(true);
+    };
+    go(); const id = setInterval(go, 3000);
     return () => { stop = true; clearInterval(id); };
   }, [mint]);
-  const name = tv?.name || seed?.name || 'Token', symbol = tv?.symbol || seed?.symbol;
+  // Tokens we have no recorded candles for (older than the robot's watch list) get plain market numbers from our server instead.
+  useEffect(() => {
+    if (!loaded || ch) return;
+    let stop = false;
+    api<{ token: TokenView }>(`/api/token?mint=${mint}`).then((r) => { if (!stop) setTv(r.token); }, () => {});
+    return () => { stop = true; };
+  }, [loaded, ch, mint]);
+  const name = ch?.name || tv?.name || seed?.name || 'Token', symbol = ch?.symbol || tv?.symbol || seed?.symbol;
   const image = tv?.imageUrl || seed?.image || null;
-  const chart = tv ? `https://dexscreener.com/solana/${tv.pairAddress}?embed=1&theme=dark&trades=0&info=0&interval=1` : null;
+  const st = useMemo(() => {
+    if (!ch || !ch.bars.length) return null;
+    const bars = ch.bars, last = bars[bars.length - 1], now = Math.floor(Date.now() / 1000);
+    const at = (sec: number) => { const cut = now - sec; for (const b of bars) if (b[0] >= cut) return b[1]; return bars[0][1]; };
+    let vol = 0, buys = 0, sells = 0; for (const b of bars) if (b[0] >= now - 3600) { vol += b[5]; buys += b[6]; sells += b[7]; }
+    const m = (p: number) => (solUsd ? p * solUsd : null);
+    return { mcap: m(last[4]), c5: (last[4] / at(300) - 1) * 100, c1h: (last[4] / at(3600) - 1) * 100, vol: m(vol), buys, sells, high: m(Math.max(...bars.map((b) => b[2]))), low: m(Math.min(...bars.map((b) => b[3]))) };
+  }, [ch, solUsd]);
   return (
     <Sheet title={`${name}${symbol ? ` · $${symbol}` : ''}`} onClose={onClose} wide>
       <div className="thead">
@@ -97,27 +119,28 @@ function TokenSheet({ mint, seed, onClose }: { mint: string; seed: Tok | null; o
         </div>
       </div>
       {seed?.description && <p>{seed.description}</p>}
-      {tv ? (
+      {st ? (
         <div className="grid4">
-          <div className="cell"><span>Price</span><b>{tv.priceUsd != null ? (tv.priceUsd < 0.01 ? `$${tv.priceUsd.toPrecision(3)}` : `$${tv.priceUsd.toFixed(4)}`) : '–'}</b></div>
+          <div className="cell"><span>Market cap</span><b>{usd(st.mcap)}</b></div>
+          <div className="cell"><span>Volume 1h</span><b>{usd(st.vol)}</b></div>
+          <div className="cell"><span>Change 5m</span><b className={st.c5 >= 0 ? 'up' : 'dn'}>{st.c5.toFixed(1)}%</b></div>
+          <div className="cell"><span>Change 1h</span><b className={st.c1h >= 0 ? 'up' : 'dn'}>{st.c1h.toFixed(1)}%</b></div>
+          <div className="cell"><span>Buys / sells 1h</span><b>{st.buys} / {st.sells}</b></div>
+          <div className="cell"><span>High · Low</span><b>{usd(st.high)} · {usd(st.low)}</b></div>
+          <div className="cell"><span>Stage</span><b>{ch?.migrated ? 'Migrated' : `Curve ${ch?.vSol != null ? Math.round(curveProgress(ch.vSol) * 100) : '–'}%`}</b></div>
+          <div className="cell"><span>Age</span><b>{ch?.firstSeen ? ago(Date.now() - Date.parse(ch.firstSeen)) : '–'}</b></div>
+        </div>
+      ) : tv ? (
+        <div className="grid4">
           <div className="cell"><span>Market cap</span><b>{usd(tv.marketCapUsd)}</b></div>
           <div className="cell"><span>Liquidity</span><b>{usd(tv.liquidityUsd)}</b></div>
           <div className="cell"><span>Volume 24h</span><b>{usd(tv.volume.h24)}</b></div>
-          <div className="cell"><span>Change 5m</span><b className={tv.change.m5 >= 0 ? 'up' : 'dn'}>{tv.change.m5.toFixed(1)}%</b></div>
           <div className="cell"><span>Change 1h</span><b className={tv.change.h1 >= 0 ? 'up' : 'dn'}>{tv.change.h1.toFixed(1)}%</b></div>
-          <div className="cell"><span>Buys / sells 1h</span><b>{tv.txns1h.buys} / {tv.txns1h.sells}</b></div>
-          <div className="cell"><span>Age</span><b>{tv.pairCreatedAt ? ago(Date.now() - tv.pairCreatedAt) : '–'}</b></div>
         </div>
       ) : null}
-      {chart ? <div className="chartbox"><iframe src={chart} title="Price chart" loading="lazy" referrerPolicy="no-referrer" /></div>
-        : <div className="coladd">{err || 'Loading market data…'}{err ? ' The chart appears once the token has a trading pair.' : ''}</div>}
-      <div className="links">
-        <a className="btn btn-ghost sm" href={tv?.url || `https://dexscreener.com/solana/${mint}`} target="_blank" rel="noreferrer">DexScreener</a>
-        <a className="btn btn-ghost sm" href={`https://solscan.io/token/${mint}`} target="_blank" rel="noreferrer">Solscan</a>
-        <a className="btn btn-ghost sm" href={`https://pump.fun/coin/${mint}`} target="_blank" rel="noreferrer">pump.fun</a>
-        {tv?.socials.map((s) => <a key={s.url} className="btn btn-ghost sm" href={s.url} target="_blank" rel="noreferrer">{s.type}</a>)}
-      </div>
-      <p className="hint">New tokens are extremely risky. A token that is live here is not a recommendation.</p>
+      {ch && ch.bars.length > 1 ? <Chart bars={ch.bars} solUsd={solUsd} />
+        : <div className="coladd">{!loaded ? 'Loading chart…' : err || 'No candles recorded for this token yet. The robot records every token it sees launch, so the chart fills in from the moment it is seen. Older tokens have no history here.'}</div>}
+      <p className="hint">Candles are built by our own robot from live trades. New tokens are extremely risky; a token shown here is not a recommendation.</p>
     </Sheet>
   );
 }
@@ -145,7 +168,7 @@ export default function TokensTab() {
           <input className="field mono" placeholder="Search by contract address…" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Contract address" spellCheck={false} autoCapitalize="off" autoCorrect="off" />
           <button className="btn btn-gold sm" type="submit">Search</button>
         </form>
-        <span className={`feedstat ${feed.status}`} title={feed.status === 'fallback' ? 'The live socket could not connect, so this list refreshes every 20 seconds from DexScreener.' : ''}><i />{STATUS_TEXT[feed.status]}</span>
+        <span className={`feedstat ${feed.status}`} title={feed.status === 'fallback' ? 'The live socket could not connect, so this list refreshes every 20 seconds from our server.' : ''}><i />{STATUS_TEXT[feed.status]}</span>
       </div>
       {msg && <div className="note err" role="alert">{msg}</div>}
       <div className="subtabs" role="tablist">
@@ -158,7 +181,7 @@ export default function TokensTab() {
         <Column title="Final stretch" hint="bonding curve nearly full" items={L.stretch} solUsd={feed.solUsd} now={now} onOpen={setOpen} on={sub === 'stretch'} empty="Tokens close to migrating show up here as the feed watches them." />
         <Column title="Migrated" hint="just graduated" items={L.migrated} solUsd={feed.solUsd} now={now} onOpen={setOpen} on={sub === 'migrated'} empty="Waiting for the next migration…" />
       </div>
-      {open && <TokenSheet mint={open} seed={feed.find(open)} onClose={() => setOpen(null)} />}
+      {open && <TokenSheet mint={open} seed={feed.find(open)} solUsd={feed.solUsd} onClose={() => setOpen(null)} />}
     </>
   );
 }

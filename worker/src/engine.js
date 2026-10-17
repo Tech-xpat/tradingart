@@ -5,6 +5,8 @@ const config = require('./config');
 const logger = require('./utils/logger');
 const { Account } = require('./trading/account');
 const { processWithdrawal } = require('./trading/withdraw');
+const charting = require('./charting');
+const collector = require('./data/collector');
 const { Keypair } = require('@solana/web3.js');
 
 class Engine {
@@ -13,7 +15,7 @@ class Engine {
     this.db = o.db; this.deps = o.deps; this.unsealSecret = o.unsealSecret; this.send = o.send || (() => {}); this.adminNotify = o.adminNotify || (() => {});
     this.accounts = new Map();
     this.timers = [];
-    this.scanning = false; this.syncing = false; this.monitoring = false; this.withdrawing = false;
+    this.scanning = false; this.agenting = false; this.syncing = false; this.monitoring = false; this.withdrawing = false;
   }
 
   notifier(userId) {
@@ -60,6 +62,7 @@ class Engine {
     this.scanning = true;
     try {
       for (const a of this.activeAccounts()) {
+        if (a.plan.agent && a.plan.agent.enabled) continue; // chart-watching plans are handled by agentTick
         if (Date.now() < (a.nextScanAt || 0)) continue;
         a.nextScanAt = Date.now() + a.plan.scanEverySec * 1000 - 500;
         const stats = {};
@@ -74,6 +77,48 @@ class Engine {
         } else if (res.why && !/^(busy|paused|max concurrent|max trades)/.test(res.why)) logger.info(`[${a.tag}] skip ${pick.mint.slice(0, 8)}…: ${res.why}`);
       }
     } catch (e) { logger.error('scanTick:', e.message); } finally { this.scanning = false; }
+  }
+
+  /**
+   * Chart-watching agents. For every running account whose plan has the agent switched on: look at the live candles of
+   * young coins, keep only coins inside the plan's age window and market-cap range, and enter when the chosen pattern
+   * (double bottom, breakout, ...) is showing. Entries use the same limits, size and exits as any other plan.
+   */
+  async agentTick() {
+    if (this.agenting) return;
+    this.agenting = true;
+    try {
+      for (const a of this.activeAccounts()) {
+        const ag = a.plan.agent;
+        if (!ag || !ag.enabled) continue;
+        if (Date.now() < (a.nextAgentAt || 0)) continue;
+        a.nextAgentAt = Date.now() + Math.max(5, a.plan.scanEverySec) * 1000 - 500;
+        const seen = (a.agentSeen ||= new Map());
+        for (const [m, t] of seen) if (Date.now() - t > 30 * 60 * 1000) seen.delete(m);
+        const held = new Set(a.positions().map((p) => p.mint));
+        let checked = 0, found = null;
+        for (const mint of collector.trackedMints()) {
+          if (held.has(mint) || seen.has(mint)) continue;
+          const mk = collector.marketFor(mint);
+          if (!mk) continue;
+          if (mk.ageSec < a.plan.minAgeSec || (a.plan.maxAgeSec != null && mk.ageSec > a.plan.maxAgeSec)) continue;
+          if (mk.marketCapUsd < ag.mcapMinUsd || (ag.mcapMaxUsd != null && mk.marketCapUsd > ag.mcapMaxUsd)) continue;
+          checked += 1;
+          const bars = charting.resample(collector.barsFor(mint), ag.tfSec);
+          const r = charting.detect(ag.pattern, bars, ag);
+          if (r.match) { found = { mint, r, mk }; break; }
+        }
+        if (!found) { a.noteScan({ candidates: checked, matched: 0, outcome: checked ? `watching ${checked} coin${checked === 1 ? '' : 's'} in your range, no ${charting.PATTERN_LABELS[ag.pattern].toLowerCase()} yet` : 'no coins inside your age and market-cap range right now' }); continue; }
+        seen.set(found.mint, Date.now());
+        const why = `agent:${ag.pattern}`;
+        const res = await a.offer(found.mint, why);
+        a.noteScan({ candidates: checked, matched: 1, mint: found.mint, outcome: res.ok ? `entered on a ${found.r.reason}` : `saw a ${ag.pattern.replace('_', ' ')} but skipped it: ${res.why}` });
+        if (res.ok) {
+          const p = res.pos;
+          a.notify(`🟢 ENTERED ${found.mint.slice(0, 6)}…${found.mint.slice(-4)} · ${p.dryRun ? 'PAPER' : 'LIVE'}\n${found.r.reason} · plan ${a.plan.name}\nin: ${p.sizeSol.toFixed(4)} SOL · mcap ≈ $${Math.round(found.mk.marketCapUsd)}\nTP +${p.takeProfitPct}% · SL −${p.stopLossPct}% · max hold ${p.maxHoldMin}m`);
+        }
+      }
+    } catch (e) { logger.error('agentTick:', e.message); } finally { this.agenting = false; }
   }
 
   async monitorTick() {
@@ -113,6 +158,15 @@ class Engine {
   }
 
   /** Tell the website we are alive and whether live trading is really on. Best effort: never blocks trading. */
+  /** Keep candles flowing for coins we hold (they are exempt from eviction and always subscribed). */
+  pinHeld() {
+    try {
+      const held = []; for (const a of this.accounts.values()) for (const p of a.positions()) held.push(p.mint);
+      const collector = require('./data/collector'); collector.pin(held);
+      const stream = require('./scanner/stream'); if (held.length) stream.subscribe(held);
+    } catch (_) { /* optional */ }
+  }
+
   async heartbeat() {
     if (!this.db.heartbeat) return;
     try { await this.db.heartbeat({ live_enabled: !!config.LIVE_TRADING_ENABLED, version: config.VERSION, accounts: this.accounts.size }); this.hbFailed = false; }
@@ -124,8 +178,10 @@ class Engine {
     try { for (const r of await this.db.stuckWithdrawals()) await this.db.finishWithdrawal(r.id, { status: 'failed', error: 'worker restarted mid-send; check your wallet and vault balance before requesting again' }); } catch (e) { logger.warn('stuck withdrawals:', e.message); }
     await this.sync();
     this.heartbeat(); this.timers.push(setInterval(() => this.heartbeat(), 15000));
+    this.timers.push(setInterval(() => this.pinHeld(), 10000));
     this.timers.push(setInterval(() => this.sync(), config.SYNC_MS));
     this.timers.push(setInterval(() => this.scanTick(), 5000));
+    this.timers.push(setInterval(() => this.agentTick(), 3000));
     this.timers.push(setInterval(() => this.monitorTick(), config.PRICE_POLL_MS));
     this.timers.push(setInterval(() => this.withdrawTick(), config.WITHDRAW_POLL_MS));
     logger.info(`engine started: ${this.accounts.size} active account(s), live trading ${config.LIVE_TRADING_ENABLED ? 'ENABLED' : 'disabled (everyone is paper)'}`);

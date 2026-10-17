@@ -130,10 +130,26 @@ create table if not exists public.art_worker (
   accounts      integer not null default 0
 );
 
+-- Our own price history: the worker records every trade it sees on the live feed into 5-second candles and saves them
+-- here so the website can draw charts without any outside chart service. Old rows are pruned after a day.
+create table if not exists public.art_charts (
+  mint        text primary key,
+  name        text,
+  symbol      text,
+  uri         text,
+  first_seen  timestamptz,
+  mcap_sol    double precision,
+  v_sol       double precision,
+  migrated    boolean not null default false,
+  bars        jsonb not null default '[]'::jsonb,
+  updated_at  timestamptz not null default now()
+);
+create index if not exists art_charts_updated_idx on public.art_charts (updated_at desc);
+
 do $$
 declare t text;
 begin
-  foreach t in array array['art_users','art_vaults','art_consents','art_settings','art_state','art_trades','art_withdrawals','art_link_codes','art_worker']
+  foreach t in array array['art_users','art_vaults','art_consents','art_settings','art_state','art_trades','art_withdrawals','art_link_codes','art_worker','art_charts']
   loop
     execute format('alter table public.%I enable row level security', t);
     execute format('revoke all on public.%I from anon, authenticated', t);

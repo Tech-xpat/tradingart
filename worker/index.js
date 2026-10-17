@@ -14,13 +14,20 @@ async function main() {
   const db = createDb(connect());
   const deps = {
     db,
-    market: require('./src/analysis/dexscreener'),
+    market: require('./src/analysis/market'),
     chain: require('./src/solana/chain'),
     swap: require('./src/trading/swap'),
     fills: require('./src/solana/fills'),
     scanner: require('./src/scanner/scanner'),
   };
   require('./src/scanner/stream').start();
+  const collector = require('./src/data/collector');
+  const scanner = require('./src/scanner/scanner');
+  // own market data: refresh the SOL price, save fresh candles for the website, tidy old rows
+  const refreshSol = () => scanner.fetchSolPriceUsd().then((v) => collector.setSolUsd(v)).catch(() => {});
+  refreshSol(); setInterval(refreshSol, 60000).unref();
+  setInterval(() => collector.flush(db).catch(() => {}), 10000).unref();
+  setInterval(() => db.pruneCharts && db.pruneCharts().catch(() => {}), 3600000).unref();
   const engine = new Engine({ db, deps, unsealSecret: (sealed) => unsealSecret(sealed, config.VAULT_SEAL_SECRET) });
   const tg = telegram.start(engine);
   engine.send = tg.send; engine.adminNotify = tg.adminNotify;

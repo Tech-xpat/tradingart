@@ -19,6 +19,9 @@ test('lib/seal, lib/verify and lib/messages are byte-identical to the worker cop
   }
 });
 
+test('lib/charting is byte-identical to the worker copy', () => {
+  assert.strictEqual(readFileSync(join(__dirname, '../lib/charting.js'), 'utf8'), readFileSync(join(__dirname, '../../worker/src/charting.js'), 'utf8'));
+});
 test('lib/planrules is byte-identical to the worker copy', () => {
   assert.strictEqual(readFileSync(join(__dirname, '../lib/planrules.js'), 'utf8'), readFileSync(join(__dirname, '../../worker/src/planrules.js'), 'utf8'));
 });

@@ -76,6 +76,12 @@ async def main():
                 await route.fulfill(status=200, content_type="image/gif", body=base64.b64decode("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"))
             await pg.route("**/api/img?**", img)
             await pg.route("**/api/token?**", one)
+            async def chart(route):
+                import time
+                now = int(time.time()); path = [100]*3 + [100 - i*5 for i in range(1, 9)] + [60 + i*4 for i in range(1, 6)] + [80 - i*4 for i in range(1, 5)] + [64 + i*2 for i in range(1, 5)]
+                bars = [[now - (len(path) - i) * 5, p, p + 1, p - 1, p, 0.5, 1, 0] for i, p in enumerate(path)]
+                await route.fulfill(status=200, content_type="application/json", body=json.dumps({"chart": {"mint": MINT, "name": "Search Coin", "symbol": "SRC", "uri": None, "firstSeen": "2026-10-16T10:00:00Z", "mcapSol": 72, "vSol": 50, "migrated": False, "bars": bars, "updatedAt": "2026-10-16T10:05:00Z"}}))
+            await pg.route("**/api/chart?**", chart)
             await pg.goto(BASE + "/app"); await pg.wait_for_timeout(1500)
             # --- tokens tab (default, works signed out) ---
             await pg.wait_for_selector(".tkcard", timeout=8000)
@@ -104,7 +110,7 @@ async def main():
             await pg.get_by_label("Contract address").fill("not-an-address"); await pg.get_by_role("button", name="Search").click()
             await pg.wait_for_selector("text=Paste a full Solana token address")
             await pg.get_by_label("Contract address").fill(MINT); await pg.get_by_role("button", name="Search").click()
-            await pg.wait_for_selector("text=Search Coin"); await pg.wait_for_selector("iframe[src*='dexscreener.com/solana/PairAddr']")
+            await pg.wait_for_selector("text=Search Coin"); await pg.wait_for_selector("canvas[aria-label='Price chart']"); assert await pg.locator("iframe").count() == 0 and await pg.locator("a[href*='dexscreener']").count() == 0, "no third-party chart or promo links"; await pg.get_by_role("tab", name="1m").click()
             await pg.screenshot(path=f"{OUT}/{name}_0_token.png")
             await pg.get_by_label("Close").click()
             await pg.screenshot(path=f"{OUT}/{name}_0_tokens.png", full_page=True)

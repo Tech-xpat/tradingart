@@ -34,6 +34,8 @@ function createDb(sb) {
       ok(await sb.from('art_state').upsert({ user_id: userId, key, value, updated_at: new Date().toISOString() }, { onConflict: 'user_id,key' }), 'setState');
     },
     async heartbeat(row) { ok(await sb.from('art_worker').upsert({ id: 'main', beat: new Date().toISOString(), ...row }, { onConflict: 'id' }), 'heartbeat'); },
+    async saveCharts(rows) { ok(await sb.from('art_charts').upsert(rows, { onConflict: 'mint' }), 'saveCharts'); },
+    async pruneCharts() { ok(await sb.from('art_charts').delete().lt('updated_at', new Date(Date.now() - 24 * 3600e3).toISOString()), 'pruneCharts'); },
     async insertTrade(row) { ok(await sb.from('art_trades').insert(row), 'insertTrade'); },
     async updateSettings(userId, patch) { ok(await sb.from('art_settings').update({ ...patch, updated_at: new Date().toISOString() }).eq('user_id', userId), 'updateSettings'); },
     async userByChat(chatId) { const r = ok(await sb.from('art_users').select('*').eq('tg_chat_id', chatId).limit(1), 'userByChat'); return r && r[0] || null; },

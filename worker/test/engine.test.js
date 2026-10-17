@@ -57,3 +57,27 @@ test('a user who pauses keeps being monitored until flat; panic closes their tra
   await eng.sync(); assert.ok(!eng.accounts.has('a'), 'dropped once flat and paused');
   void price;
 });
+
+test('an agent plan watches live candles and enters on a double bottom inside its market-cap range, and only then', async () => {
+  const collector = require('../src/data/collector'); const { addTrade } = require('../src/charting');
+  const { sanitizePlan, HUNTER } = require('../src/planrules');
+  collector._reset(); collector.setSolUsd(200);
+  const hunter = { ...sanitizePlan({ ...HUNTER, id: 'h', minAgeSec: 0, maxAgeSec: null, agent: { ...HUNTER.agent, mcapMinUsd: 1000, mcapMaxUsd: 100000, tfSec: 5, pattern: 'double_bottom' } }), id: 'h' };
+  const { eng, sent, picks } = mkEngine([{ id: 'a', chat: 1, plans: [hunter], plan: 'h' }]);
+  await eng.sync();
+  const mkPath = (...legs) => { const out = [legs[0]]; let p = legs[0]; for (let i = 1; i < legs.length; i += 2) { for (let s = 1; s <= legs[i]; s++) out.push(p + ((legs[i + 1] - p) * s) / legs[i]); p = legs[i + 1]; } return out; };
+  const feed = (mint, closes) => { collector.onMessage({ txType: 'create', mint, name: 'X', marketCapSol: closes[0], vSolInBondingCurve: 40, solAmount: 1 }); const e = collector.barsFor(mint); e.length = 0; closes.forEach((p, i) => addTrade(e, { t: Date.now() / 1000 - (closes.length - i) * 5, p, v: 1, side: i % 2 ? 'sell' : 'buy' })); };
+  const SHAPE = mkPath(100, 12, 60, 8, 80, 8, 61, 5, 66).map((x) => x * 0.3); // mcap in SOL: ~18-30 SOL = $3.6k-6k at $200
+  feed('GoodMint1111111111111111111111111111111111', SHAPE);
+  feed('FlatMint1111111111111111111111111111111111', Array.from({ length: 60 }, () => 20));
+  feed('BigMint11111111111111111111111111111111111', SHAPE.map((x) => x * 100)); // right shape, far outside the range
+  collector.onMessage({ txType: 'buy', mint: 'GoodMint1111111111111111111111111111111111', marketCapSol: SHAPE[SHAPE.length - 1], solAmount: 0.1 });
+  await eng.scanTick(); assert.strictEqual(picks.length, 0, 'agent plans do not use the ordinary scanner');
+  await eng.agentTick();
+  assert.strictEqual(sent.length, 1, JSON.stringify(sent)); assert.match(sent[0][1], /ENTERED GoodMi/); assert.match(sent[0][1], /double bottom/);
+  assert.strictEqual(eng.accounts.get('a').openCount(), 1);
+  const st = eng.accounts.get('a').lastScan; assert.match(st.outcome, /entered/);
+  eng.accounts.get('a').nextAgentAt = 0; await eng.agentTick();
+  assert.strictEqual(sent.length, 1, 'no second entry on the same coin or the others');
+  collector._reset();
+});

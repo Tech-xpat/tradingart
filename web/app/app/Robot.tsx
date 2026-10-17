@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api, short, sol, signed, ago, Slider, Spark, type Me, type Plan, type Trades } from './shared';
+import { api, short, sol, signed, ago, Slider, Spark, type Me, type Plan, type Trades, type Agent, AGENT_DEFAULT } from './shared';
 import type { Proof } from '@/components/useSign';
 
 type RunFn = (k: string, f: () => Promise<void>) => Promise<void>;
@@ -74,6 +74,14 @@ export default function RobotTab({ me, refresh, run, busy, say, sign, openSheet 
 
   const savePlans = (list: Plan[], activePlan: string, ok: string) => run('plans', async () => { await api('/api/settings', { method: 'PATCH', body: JSON.stringify({ plans: list, activePlan }) }); setDirty(false); await refresh(); say('ok', ok); });
   const savePlan = () => { if (!draft) return; savePlans(plans.map((p) => (p.id === draft.id ? draft : p)), draft.id, `Plan “${draft.name}” saved.`); };
+  const ag = draft?.agent;
+  const editAgent = (patch: Partial<Agent>) => edit({ agent: { ...(draft?.agent || AGENT_DEFAULT), ...patch } });
+  const newHunter = () => {
+    if (plans.length >= 10) return;
+    const id = `p${Date.now().toString(36)}`;
+    const hunter: Plan = { id, name: 'Bottom Hunter', sizeUsd: draft?.sizeUsd ?? 7, minAgeSec: 120, maxAgeSec: 6 * 3600, takeProfitPct: 40, stopLossPct: 20, maxHoldMin: 20, scanEverySec: 10, maxTradesDay: 20, minLiqUsd: 0, minVol1hUsd: 0, minBuys1h: 0, requireRising: false, agent: { ...AGENT_DEFAULT } };
+    savePlans([...plans, hunter], id, 'Chart agent plan created. Set your range and save.');
+  };
   const newPlan = () => {
     if (plans.length >= 10 || !draft) return;
     const id = `p${Date.now().toString(36)}`;
@@ -188,6 +196,7 @@ export default function RobotTab({ me, refresh, run, busy, say, sign, openSheet 
               <button key={p.id} role="radio" aria-checked={p.id === activeId} className={`plan ${p.id === activeId ? 'on' : ''}`} disabled={!!busy || (running && p.id !== activeId)} onClick={() => switchPlan(p.id)}>{p.name}</button>
             ))}
             <button className="plan add" disabled={!!busy || plans.length >= 10 || !draft} onClick={newPlan} aria-label="New plan">+ New plan</button>
+            <button className="plan add" disabled={!!busy || plans.length >= 10} onClick={newHunter} aria-label="New chart agent plan">+ Chart agent</button>
           </div>
           {running && <p className="hint">Turn the robot off to switch plans. You can still edit and save this one.</p>}
           {draft && (
@@ -204,6 +213,36 @@ export default function RobotTab({ me, refresh, run, busy, say, sign, openSheet 
                 <NumField label="Look for coins every" suffix="seconds" value={draft.scanEverySec} aria="Scan interval seconds" onChange={(n) => edit({ scanEverySec: n })} />
               </div>
               {draft.maxAgeSec != null && draft.maxAgeSec <= draft.minAgeSec && <p className="hint warn">The maximum age must be larger than the minimum, or leave it empty for no maximum.</p>}
+              <div className="agentbox">
+                <label className="check"><input type="checkbox" aria-label="Chart agent" checked={!!ag?.enabled} onChange={(e) => editAgent({ enabled: e.target.checked })} /><b>Chart agent</b> — watch the live candles and enter on a pattern, even while I am away</label>
+                {ag?.enabled && (
+                  <>
+                    <p className="hint">The agent reads our own live trade candles of young coins, and enters only when the pattern shows inside your market-cap range. Size, take profit, stop loss and your safety limits still apply. It replaces the ordinary coin scan for this plan.</p>
+                    <div className="fgrid">
+                      <div><span className="lbl">Pattern</span>
+                        <select className="field" aria-label="Pattern" value={ag.pattern} onChange={(e) => editAgent({ pattern: e.target.value as Agent['pattern'] })}>
+                          <option value="double_bottom">Double bottom</option><option value="breakout">Breakout</option><option value="dip_buy">Dip then bounce</option><option value="volume_spike">Volume spike</option>
+                        </select></div>
+                      <div><span className="lbl">Candle size</span>
+                        <select className="field" aria-label="Candle size" value={ag.tfSec} onChange={(e) => editAgent({ tfSec: Number(e.target.value) })}>
+                          <option value={5}>5 seconds</option><option value={15}>15 seconds</option><option value={60}>1 minute</option><option value={300}>5 minutes</option>
+                        </select></div>
+                      <NumField label="Market cap from" suffix="USD" value={ag.mcapMinUsd} aria="Market cap minimum" onChange={(n) => editAgent({ mcapMinUsd: n })} />
+                      <NumField label="Market cap up to" suffix="USD" value={ag.mcapMaxUsd ?? NaN} aria="Market cap maximum" onChange={(n) => editAgent({ mcapMaxUsd: Number.isFinite(n) ? n : null })} />
+                      {(ag.pattern === 'double_bottom' || ag.pattern === 'dip_buy') && <NumField label="Drop before the bottom" suffix="% at least" value={ag.minDropPct} aria="Minimum drop percent" onChange={(n) => editAgent({ minDropPct: n })} />}
+                      {ag.pattern === 'double_bottom' && <NumField label="Two bottoms within" suffix="% of each other" value={ag.tolerancePct} aria="Bottom tolerance percent" onChange={(n) => editAgent({ tolerancePct: n })} />}
+                      {(ag.pattern === 'double_bottom' || ag.pattern === 'dip_buy') && <NumField label="Bounce between" suffix="% at least" value={ag.bouncePct} aria="Bounce percent" onChange={(n) => editAgent({ bouncePct: n })} />}
+                      {ag.pattern === 'volume_spike' && <NumField label="Volume at least" suffix="× normal" value={ag.volMult} aria="Volume multiple" onChange={(n) => editAgent({ volMult: n })} />}
+                      {ag.pattern === 'double_bottom' && (
+                        <div className="span2"><span className="lbl">Enter when</span>
+                          <select className="field" aria-label="Entry trigger" value={ag.trigger} onChange={(e) => editAgent({ trigger: e.target.value as Agent['trigger'] })}>
+                            <option value="confirm">price turns up from the second bottom (earlier, riskier)</option><option value="neckline">price breaks the middle peak (later, safer)</option>
+                          </select></div>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
               <details className="adv">
                 <summary>Advanced filters</summary>
                 <div className="fgrid">

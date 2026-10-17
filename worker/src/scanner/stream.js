@@ -6,6 +6,7 @@
 const WebSocket = require('ws');
 const logger = require('../utils/logger');
 const config = require('../config');
+const collector = require('../data/collector');
 
 const KEEP_MS = 6 * 60 * 60 * 1000;
 const MAX_KEEP = 1500;
@@ -22,8 +23,18 @@ function remember(mint, kind, extra) {
 function onMessage(raw) {
   let m; try { m = JSON.parse(String(raw)); } catch (_) { return; }
   if (!m || typeof m !== 'object' || !m.mint) return;
-  if (m.txType === 'create') remember(m.mint, 'new', m);
-  else if (m.txType === 'migrate') remember(m.mint, 'migrated', m);
+  if (m.txType === 'create') { remember(m.mint, 'new', m); subscribeTrades([m.mint]); }
+  else if (m.txType === 'migrate') { remember(m.mint, 'migrated', m); subscribeTrades([m.mint]); }
+  collector.onMessage(m); // every create / buy / sell becomes a candle
+}
+
+/** Ask the feed for the trades of these coins (it only sends trades we subscribe to). */
+const subbed = new Set();
+function subscribeTrades(list) {
+  const fresh = list.filter((m) => m && !subbed.has(m)); if (!fresh.length) return;
+  if (!ws || ws.readyState !== 1) return; // re-sent on (re)connect from collector.trackedMints()
+  fresh.forEach((m) => subbed.add(m));
+  try { ws.send(JSON.stringify({ method: 'subscribeTokenTrade', keys: fresh })); } catch (_) { fresh.forEach((m) => subbed.delete(m)); }
 }
 
 function connect() {
@@ -32,6 +43,7 @@ function connect() {
   ws.on('open', () => {
     backoff = 1000;
     try { ws.send(JSON.stringify({ method: 'subscribeNewToken' })); ws.send(JSON.stringify({ method: 'subscribeMigration' })); } catch (_) {}
+    subbed.clear(); subscribeTrades([...new Set([...collector.trackedMints(), ...mints.keys()])].slice(-collector.MAX_TOKENS));
     logger.info('new-token stream connected');
   });
   ws.on('message', onMessage);
@@ -61,4 +73,4 @@ function recent(minAgeSec, maxAgeSec, limit = 60) {
 }
 function _feed(msg) { onMessage(JSON.stringify(msg)); } // tests
 
-module.exports = { start, stop, recent, _feed, size: () => mints.size };
+module.exports = { start, stop, recent, subscribe: subscribeTrades, _feed, size: () => mints.size };

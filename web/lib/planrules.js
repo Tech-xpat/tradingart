@@ -7,8 +7,38 @@ const STEADY = { name: 'Steady', sizeUsd: 7, minAgeSec: 10 * DAY, maxAgeSec: nul
 const SNIPER = { name: 'Sniper', sizeUsd: 7, minAgeSec: 30, maxAgeSec: 30 * 60, takeProfitPct: 50, stopLossPct: 25, maxHoldMin: 3, scanEverySec: 20, maxTradesDay: 20, minLiqUsd: 4000, minVol1hUsd: 500, minBuys1h: 5, requireRising: false };
 
 const MAX_PLANS = 10;
+
+/** The chart-watching agent a plan can carry. When enabled, the robot watches the live candles of young coins and
+ *  enters only when the chosen pattern shows up inside the market-cap range. Everything else in the plan (size, exits) still applies. */
+const PATTERNS = ['double_bottom', 'breakout', 'dip_buy', 'volume_spike'];
+const AGENT_TFS = [5, 15, 60, 300];
+const AGENT_OFF = { enabled: false, pattern: 'double_bottom', tfSec: 15, mcapMinUsd: 0, mcapMaxUsd: null, tolerancePct: 6, minDropPct: 25, bouncePct: 8, confirmPct: 2, trigger: 'confirm', lookbackBars: 120, volMult: 4 };
+const HUNTER = { name: 'Bottom Hunter', sizeUsd: 7, minAgeSec: 120, maxAgeSec: 6 * 3600, takeProfitPct: 40, stopLossPct: 20, maxHoldMin: 20, scanEverySec: 10, maxTradesDay: 20, minLiqUsd: 0, minVol1hUsd: 0, minBuys1h: 0, requireRising: false,
+  agent: { ...AGENT_OFF, enabled: true, mcapMinUsd: 8000, mcapMaxUsd: 100000 } };
 const num = (v, d) => { const n = Number(v); return Number.isFinite(n) ? n : d; };
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+function sanitizeAgent(a, base = AGENT_OFF) {
+  a = a && typeof a === 'object' ? a : {};
+  const mcapMin = clamp(num(a.mcapMinUsd, base.mcapMinUsd), 0, 1e12);
+  let mcapMax = a.mcapMaxUsd === undefined ? base.mcapMaxUsd : a.mcapMaxUsd;
+  mcapMax = mcapMax == null || mcapMax === '' ? null : clamp(num(mcapMax, 0), 0, 1e12);
+  if (mcapMax !== null && mcapMax <= mcapMin) mcapMax = null;
+  const tf = Math.round(num(a.tfSec, base.tfSec));
+  return {
+    enabled: a.enabled === undefined ? !!base.enabled : !!a.enabled,
+    pattern: PATTERNS.includes(a.pattern) ? a.pattern : base.pattern,
+    tfSec: AGENT_TFS.includes(tf) ? tf : base.tfSec,
+    mcapMinUsd: mcapMin, mcapMaxUsd: mcapMax,
+    tolerancePct: clamp(num(a.tolerancePct, base.tolerancePct), 0.5, 25),
+    minDropPct: clamp(num(a.minDropPct, base.minDropPct), 5, 95),
+    bouncePct: clamp(num(a.bouncePct, base.bouncePct), 2, 300),
+    confirmPct: clamp(num(a.confirmPct, base.confirmPct), 0, 50),
+    trigger: a.trigger === 'neckline' ? 'neckline' : a.trigger === 'confirm' ? 'confirm' : base.trigger,
+    lookbackBars: clamp(Math.round(num(a.lookbackBars, base.lookbackBars)), 20, 400),
+    volMult: clamp(num(a.volMult, base.volMult), 1.5, 50),
+  };
+}
 
 /** Make any input a safe plan. Out-of-range numbers are pulled into range, never trusted. */
 function sanitizePlan(p = {}, base = STEADY) {
@@ -30,9 +60,10 @@ function sanitizePlan(p = {}, base = STEADY) {
     minVol1hUsd: clamp(num(p.minVol1hUsd, base.minVol1hUsd), 0, 1e9),
     minBuys1h: clamp(Math.round(num(p.minBuys1h, base.minBuys1h)), 0, 1e6),
     requireRising: p.requireRising === undefined ? !!base.requireRising : !!p.requireRising,
+    agent: sanitizeAgent(p.agent, base.agent || AGENT_OFF),
   };
 }
 
 function defaultPlans() { return [{ id: 'steady', ...STEADY }, { id: 'sniper', ...SNIPER }]; }
 
-module.exports = { sanitizePlan, defaultPlans, MAX_PLANS, STEADY, SNIPER };
+module.exports = { sanitizePlan, sanitizeAgent, defaultPlans, MAX_PLANS, STEADY, SNIPER, HUNTER, AGENT_OFF, PATTERNS, AGENT_TFS };
