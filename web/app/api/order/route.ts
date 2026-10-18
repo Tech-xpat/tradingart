@@ -33,6 +33,18 @@ export const GET = authed({ limit: [120, 60_000] }, async ({ req, session }) => 
   if (!/^[0-9a-f-]{36}$/i.test(id)) return fail('bad id');
   const row = must(await db().from('art_orders').select('status,result,paper,created_at').eq('id', id).eq('user_id', session.userId).maybeSingle(), 'order');
   if (!row) return fail('not found', 404);
-  const stale = row.status === 'pending' && Date.now() - Date.parse(row.created_at) > 45_000;
-  return json({ status: row.status, result: stale ? 'The robot did not pick this up. Check that the robot service shows online in the Robot tab.' : row.result, paper: row.paper, stale });
+  const stale = row.status === 'pending' && Date.now() - Date.parse(row.created_at) > 20_000;
+  let why = row.result;
+  if (stale) {
+    why = 'The robot did not pick this up.';
+    try {
+      const w = must(await db().from('art_worker').select('beat,version').eq('id', 'main').maybeSingle(), 'worker');
+      const age = w ? (Date.now() - Date.parse(w.beat)) / 1000 : null;
+      const [maj, min] = String(w?.version || '0.0').split('.').map(Number);
+      if (!w || age === null || age > 90) why = 'The robot service is offline (no sign of life for a while). Check Railway: it must be running.';
+      else if (maj < 4 || (maj === 4 && min < 2)) why = `The robot service is still running an old version (${w.version}). Redeploy Railway so it picks up manual buys (needs 4.2 or newer).`;
+      else why = 'The robot service is online but has not picked this up yet. Check the Railway logs for "orderTick".';
+    } catch { /* keep the generic text */ }
+  }
+  return json({ status: row.status, result: why, paper: row.paper, stale });
 });

@@ -154,6 +154,7 @@ class Engine {
     try {
       const orders = await this.db.pendingOrders();
       if (!orders.length) return;
+      logger.info(`orders waiting: ${orders.length}`);
       if (orders.some((o) => !this.accounts.has(o.user_id))) { this.ordering = false; await this.sync(); this.ordering = true; }
       for (const o of orders) {
         if (!(await this.db.claimOrder(o.id))) continue;

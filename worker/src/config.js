@@ -8,7 +8,7 @@ const DEFAULT_RPC_URLS = ['https://api.mainnet-beta.solana.com', 'https://solana
 const rpcFromEnv = list('RPC_URLS').concat(list('RPC_URL'));
 
 module.exports = {
-  VERSION: '4.0.0',
+  VERSION: '4.2.0',
 
   SUPABASE_URL: (process.env.SUPABASE_URL || '').replace(/\/+$/, ''),
   SUPABASE_SERVICE_KEY: process.env.SUPABASE_SERVICE_KEY || '',
