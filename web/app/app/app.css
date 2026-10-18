@@ -303,3 +303,41 @@ footer { padding: 26px 0 60px; color: var(--muted); font-size: 12px; max-width: 
 .trendhead { display:flex; align-items:center; gap:8px; font:700 12px var(--mono); color:var(--gold, #FFD23F); letter-spacing:.04em; text-transform:uppercase; margin-top:4px; }
 .trader { border:1px solid var(--line); border-radius:12px; padding:10px; margin-top:8px; background:#0a0d10; }
 .hrow .who { text-decoration: underline; text-underline-offset: 3px; cursor:pointer; background:none; border:0; color:#cfd3da; font:inherit; text-align:right; }
+
+/* big coin cards: 3x pictures, bold live numbers, warning icons */
+.tkcard { grid-template-columns: 108px minmax(0,1fr); gap: 8px 14px; padding: 12px; align-items: start; }
+.avatar.huge { width:108px; height:108px; border-radius: 18px; font-size: 26px; }
+.tkmain { min-width:0; display:grid; gap: 6px; }
+.tkline { display:flex; justify-content:space-between; gap:8px; align-items:baseline; min-width:0; }
+.tkname b { font-size: 17px; } .tkname span { font-size: 13px; }
+.tkbig { display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; }
+.tkbig span, .tkpair span, .hero3 span { display:block; font: 600 10px var(--mono); letter-spacing:.09em; text-transform:uppercase; color: var(--muted); width:100%; }
+.tkbig b { font: 800 26px/1.05 var(--tech); letter-spacing:-.01em; color: var(--ink); }
+.tkbig em { font: 700 14px var(--mono); font-style:normal; }
+.tkpair { display:grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 8px; }
+.tkpair b { font: 800 17px/1.1 var(--tech); color: var(--ink); white-space:nowrap; }
+.tkcard .flags, .tkcard .risk, .tkcard .curve { grid-column: 1 / -1; }
+.flash { transition: color .9s, text-shadow .9s; }
+.flash.up { color: var(--up) !important; text-shadow: 0 0 14px rgba(70,230,140,.55); transition: none; }
+.flash.dn { color: var(--down) !important; text-shadow: 0 0 14px rgba(255,90,90,.55); transition: none; }
+.flags { display:flex; gap:7px; flex-wrap:wrap; }
+.flag { position:relative; display:inline-grid; place-items:center; width:38px; height:38px; border-radius:12px; border:2px solid var(--line); background: rgba(255,255,255,.04); }
+.flag i { font-style:normal; font-size: 18px; line-height:1; }
+.flag u { position:absolute; right:-6px; top:-6px; min-width:17px; height:17px; border-radius:99px; text-decoration:none; font: 800 11px/17px var(--mono); text-align:center; color:#0b0d12; background: var(--muted); }
+.flag.ok { border-color: rgba(70,230,140,.7); } .flag.ok u { background: var(--up); }
+.flag.warn { border-color: rgba(255,200,60,.85); } .flag.warn u { background: var(--yellow); }
+.flag.bad { border-color: rgba(255,90,90,.95); background: rgba(255,90,90,.1); } .flag.bad u { background: var(--down); color:#fff; }
+.flag.unknown { opacity:.6; border-style:dashed; }
+.flag.big { width:46px; height:46px; flex: none; } .flag.big i { font-size: 22px; }
+.flagdetail { display:grid; gap:8px; margin: 10px 0; padding: 12px; border:1px solid var(--line); border-radius:14px; background: rgba(255,255,255,.02); }
+.flagrow { display:flex; gap:12px; align-items:center; } .flagrow p { margin:2px 0 0; color: var(--muted); font-size: 13px; line-height:1.35; } .flagrow b { font-size: 14px; }
+.flagrow.bad b { color: var(--down); } .flagrow.warn b { color: var(--yellow); }
+.hero3 { display:grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap:10px; margin: 12px 0; }
+.hero3 > div { border:1px solid var(--line); border-radius:14px; padding: 12px 14px; background: rgba(255,255,255,.03); min-width:0; }
+.hero3 b { display:block; margin-top:4px; font: 800 30px/1.05 var(--tech); letter-spacing:-.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+@media (max-width: 520px) { .hero3 b { font-size: 21px; } .hero3 > div { padding: 10px; } .tkbig b { font-size: 23px; } .tkpair b { font-size: 15px; } }
+.thead .avatar.huge { width:108px; height:108px; }
+
+.liveproof .proofrows { display:grid; gap:6px; margin-top:10px; }
+.proofrow { display:flex; gap:12px; align-items:center; flex-wrap:wrap; padding:8px 10px; border:1px solid var(--line); border-radius:10px; font: 500 12.5px var(--mono); }
+.proofrow a { color: var(--lime2); }

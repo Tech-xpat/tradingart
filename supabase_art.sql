@@ -173,6 +173,7 @@ alter table public.art_charts add column if not exists bars_1m     jsonb not nul
 alter table public.art_charts add column if not exists bars_5m     jsonb not null default '[]'::jsonb;   -- 5-minute candles, up to 3 days
 alter table public.art_charts add column if not exists trades      jsonb not null default '[]'::jsonb;   -- the last ~60 trades by everyone: [ms, 'b'|'s', sol, mcapSol, trader, sig]
 alter table public.art_charts add column if not exists has_thumb   boolean not null default false;
+alter table public.art_charts add column if not exists dev         text;
 create index if not exists art_charts_updated_idx on public.art_charts (updated_at desc);
 create index if not exists art_charts_first_seen_idx on public.art_charts (first_seen desc);
 create index if not exists art_charts_vsol_idx on public.art_charts (v_sol desc);

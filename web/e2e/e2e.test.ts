@@ -323,6 +323,15 @@ test('manual buy: needs sign-in, validates, records one order at a time, and the
   assert.strictEqual((await other.call(`/api/order?id=${id}`)).status, 404, 'only the owner can see it');
 });
 
+test('safety icons: bad address refused; an unreadable coin comes back as unknown, never as safe', async () => {
+  const A = new Browser();
+  assert.strictEqual((await A.call('/api/safety?mint=bad')).status, 400);
+  const r = await A.call(`/api/safety?mint=${CHAIN_MINT}`); assert.strictEqual(r.status, 200, JSON.stringify(r.json));
+  assert.deepStrictEqual(r.json.flags.map((f: any) => f.key), ['mint', 'freeze', 'holders', 'dev', 'phish']);
+  assert.ok(r.json.flags.every((f: any) => ['ok', 'warn', 'bad', 'unknown'].includes(f.level)));
+  assert.ok(r.json.flags.filter((f: any) => f.key !== 'phish').every((f: any) => f.level === 'unknown' || f.level !== 'ok' || f.key !== 'dev'), 'no invented green for the developer check');
+});
+
 test('panic pauses the robot and stamps panic_at for the worker', async () => {
   const w = mkWallet(); const b = new Browser(); await b.signIn(w);
   await b.call('/api/settings', { method: 'PATCH', body: { paused: false } });

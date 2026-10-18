@@ -6,6 +6,7 @@ import { useLiveTokens, LIST_SIZE, curveProgress, getLocalBars, getLocalTrades, 
 import type { TokenView } from '@/lib/dex';
 import { riskOf, type Risk } from '@/lib/risk';
 import { api, Sheet, ago, usd, short, type Me, type Plan, AGENT_DEFAULT } from './shared';
+import type { Flag } from '@/lib/safety';
 
 const STATUS_TEXT: Record<FeedStatus, string> = { connecting: 'Connecting…', live: 'Live', fallback: 'Backup feed' };
 
@@ -18,7 +19,7 @@ function view(t: Tok, solUsd: number | null) {
   const txns = t.dex ? t.dex.txns1h.buys + t.dex.txns1h.sells : t.buys + t.sells;
   const created = t.dex?.pairCreatedAt || t.createdAt;
   const px = t.dex?.priceUsd ?? (mcap != null ? mcap / 1e9 : null); // pump.fun tokens have a 1B supply
-  return { mcap, vol, txns, created, change: t.dex?.change.h1 ?? t.own?.c1h ?? null, liq: t.dex?.liquidityUsd ?? null, px };
+  return { mcap, vol, txns, created, change: t.dex?.change.h1 ?? t.own?.c1h ?? null, liq: t.dex?.liquidityUsd ?? (t.progress != null && solUsd ? (30 + 85 * t.progress) * solUsd : null), px };
 }
 
 /**
@@ -27,7 +28,7 @@ function view(t: Tok, solUsd: number | null) {
  */
 const thumb = (u: string | null, w = 64) => (u && /^https:\/\//.test(u) ? `/api/img?w=${w}&u=${encodeURIComponent(u)}` : null);
 const RETRY = [3000, 9000, 25000, 60000, 150000];
-function Avatar({ t, big }: { t: { mint?: string; thumb?: boolean; image: string | null; symbol: string | null; name: string | null }; big?: boolean }) {
+function Avatar({ t, big, huge }: { t: { mint?: string; thumb?: boolean; image: string | null; symbol: string | null; name: string | null }; big?: boolean; huge?: boolean }) {
   const [attempt, setAttempt] = useState(0); // how many times the picture failed so far
   const [failed, setFailed] = useState(false); // currently showing initials while we wait to retry
   useEffect(() => { setAttempt(0); setFailed(false); }, [t.image, t.thumb]);
@@ -37,14 +38,65 @@ function Avatar({ t, big }: { t: { mint?: string; thumb?: boolean; image: string
     return () => clearTimeout(id);
   }, [failed, attempt]);
   const own = t.mint && t.thumb ? `/api/thumb?mint=${t.mint}${attempt ? `&r=${attempt}` : ''}` : null;
-  const link = thumb(t.image, big ? 128 : 64);
+  const link = thumb(t.image, huge ? 256 : big ? 128 : 64);
   const src = own || (link ? `${link}${attempt ? `&r=${attempt}` : ''}` : null);
   return (
-    <div className={`avatar ${big ? 'big' : ''}`} aria-hidden>
+    <div className={`avatar ${huge ? 'huge' : big ? 'big' : ''}`} aria-hidden>
       <span>{(t.symbol || t.name || '?').slice(0, 2).toUpperCase()}</span>
-      {src && !failed && attempt <= RETRY.length && <img key={src} src={src} alt="" width={big ? 58 : 36} height={big ? 58 : 36} loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => { setAttempt((n) => n + 1); setFailed(true); }} />}
+      {src && !failed && attempt <= RETRY.length && <img key={src} src={src} alt="" width={huge ? 108 : big ? 58 : 36} height={huge ? 108 : big ? 58 : 36} loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => { setAttempt((n) => n + 1); setFailed(true); }} />}
     </div>
   );
+}
+
+/** A number that flashes green when it rises and red when it falls, so changes are visible as they happen. */
+function Flash({ v, children, className }: { v: number | null | undefined; children: React.ReactNode; className?: string }) {
+  const prev = useState<{ v: number | null | undefined }>({ v })[0];
+  const [dir, setDir] = useState<'up' | 'dn' | ''>('');
+  useEffect(() => {
+    if (v == null || prev.v == null || v === prev.v) { prev.v = v; return; }
+    setDir(v > prev.v ? 'up' : 'dn'); prev.v = v;
+    const id = setTimeout(() => setDir(''), 900);
+    return () => clearTimeout(id);
+  }, [v, prev]);
+  return <b className={`${className || ''} flash ${dir}`}>{children}</b>;
+}
+
+/** Warning icons for a coin. Fetched a couple at a time and cached, so a long list does not hammer the network. */
+const safetyCache = new Map<string, Flag[] | 'err'>();
+const safetyWait: Array<() => void> = []; let safetyBusy = 0;
+function safetySlot(): Promise<void> { return new Promise((res) => { const go = () => { safetyBusy++; res(); }; if (safetyBusy < 2) go(); else safetyWait.push(go); }); }
+function safetyDone() { safetyBusy--; const n = safetyWait.shift(); if (n) n(); }
+function useSafety(mint: string): Flag[] | null {
+  const [f, setF] = useState<Flag[] | null>(() => { const c = safetyCache.get(mint); return Array.isArray(c) ? c : null; });
+  useEffect(() => {
+    const c = safetyCache.get(mint);
+    if (Array.isArray(c)) { setF(c); return; }
+    if (c === 'err') return;
+    let dead = false;
+    (async () => {
+      await safetySlot();
+      try {
+        if (dead) return;
+        const r = await fetch(`/api/safety?mint=${mint}`); const j = await r.json();
+        if (!r.ok || !Array.isArray(j.flags)) throw new Error('x');
+        safetyCache.set(mint, j.flags); if (!dead) setF(j.flags);
+      } catch { safetyCache.set(mint, 'err'); setTimeout(() => safetyCache.delete(mint), 60000); } finally { safetyDone(); }
+    })();
+    return () => { dead = true; };
+  }, [mint]);
+  return f;
+}
+const MARK: Record<Flag['level'], string> = { ok: '✓', warn: '!', bad: '✕', unknown: '?' };
+function Flags({ mint, detail }: { mint: string; detail?: boolean }) {
+  const f = useSafety(mint);
+  if (!f) return <div className="flags" aria-label="Checking safety">{['🔒', '❄️', '🐋', '👤', '🎣'].map((i) => <span key={i} className="flag unknown"><i>{i}</i><u>…</u></span>)}</div>;
+  if (detail) return (
+    <div className="flagdetail" aria-label="Safety checks">
+      {f.map((x) => <div key={x.key} className={`flagrow ${x.level}`}><span className="flag big"><i>{x.icon}</i><u>{MARK[x.level]}</u></span><div><b>{x.label}</b><p>{x.text}</p></div></div>)}
+      <p className="hint">Built from public chain data. A green row is not a guarantee: it only means that particular warning sign was not found.</p>
+    </div>
+  );
+  return <div className="flags" aria-label="Safety checks">{f.map((x) => <span key={x.key} className={`flag ${x.level}`} title={`${x.label}: ${x.text}`}><i>{x.icon}</i><u>{MARK[x.level]}</u></span>)}</div>;
 }
 
 function RiskBar({ risk }: { risk: Risk }) {
@@ -61,16 +113,18 @@ function Card({ t, solUsd, now, onOpen }: { t: Tok; solUsd: number | null; now: 
   const risk = riskOf(t, solUsd, now);
   return (
     <button className="tkcard" onClick={() => onOpen(t.mint)} aria-label={`Open ${t.name || t.mint}`}>
-      <Avatar t={t} />
-      <div className="tkname"><b>{t.name || 'New token'}</b><span>{t.symbol ? `$${t.symbol}` : ''}</span></div>
-      <div className="tkage">{ago(now - (t.kind === 'migrated' && t.migratedAt ? t.migratedAt : v.created))}</div>
-      <div className="tkstats">
-        <span>Price <b>{price(v.px)}</b></span>
-        <span>MC <b>{usd(v.mcap)}</b></span>
-        <span>Vol <b>{usd(v.vol)}</b></span>
-        <span>Liq <b>{usd(v.liq)}</b></span>
-        {v.change != null && <span className={v.change >= 0 ? 'up' : 'dn'}>{v.change >= 0 ? '+' : ''}{v.change.toFixed(1)}%</span>}
+      <Avatar big huge t={t} />
+      <div className="tkmain">
+        <div className="tkline"><div className="tkname"><b>{t.name || 'New token'}</b><span>{t.symbol ? `$${t.symbol}` : ''}</span></div>
+          <div className="tkage">{ago(now - (t.kind === 'migrated' && t.migratedAt ? t.migratedAt : v.created))}</div></div>
+        <div className="tkbig"><span>Market cap</span><Flash v={v.mcap}>{usd(v.mcap)}</Flash>{v.change != null && <em className={v.change >= 0 ? 'up' : 'dn'}>{v.change >= 0 ? '+' : ''}{v.change.toFixed(1)}%</em>}</div>
+        <div className="tkpair">
+          <div><span>Volume</span><Flash v={v.vol}>{usd(v.vol)}</Flash></div>
+          <div><span>Liquidity</span><Flash v={v.liq}>{usd(v.liq)}</Flash></div>
+          <div><span>Price</span><Flash v={v.px}>{price(v.px)}</Flash></div>
+        </div>
       </div>
+      <Flags mint={t.mint} />
       <RiskBar risk={risk} />
       {t.kind === 'new' && t.progress != null && <div className="curve"><span>Curve {Math.round(t.progress * 100)}%</span><div className="meter" title={`About ${(t.progress * 100).toFixed(0)}% of the way to migration`}><i style={{ width: `${Math.round(t.progress * 100)}%` }} /></div></div>}
     </button>
@@ -312,7 +366,7 @@ function TokenSheet({ mint, seed, solUsd, me, onSaved, goRobot, onClose }: { min
   return (
     <Sheet title={`${name}${symbol ? ` · $${symbol}` : ''}`} onClose={onClose} wide>
       <div className="thead">
-        <Avatar big t={{ mint, thumb: seed?.thumb, image, symbol: symbol || null, name }} />
+        <Avatar big huge t={{ mint, thumb: seed?.thumb, image, symbol: symbol || null, name }} />
         <div style={{ minWidth: 0 }}>
           <div className="mono" style={{ fontSize: 12, color: 'var(--muted)', wordBreak: 'break-all' }}>{mint}</div>
           <div className="row" style={{ marginTop: 6 }}>
@@ -327,6 +381,14 @@ function TokenSheet({ mint, seed, solUsd, me, onSaved, goRobot, onClose }: { min
       {buying && <BuyPanel mint={mint} symbol={symbol} me={me} solUsd={solUsd} goRobot={goRobot} onClose={() => setBuying(false)} />}
       {watch && <WatchPanel mint={mint} symbol={symbol} mcapUsd={st?.mcap ?? tv?.marketCapUsd ?? null} me={me} onSaved={onSaved} goRobot={goRobot} onClose={() => setWatch(false)} />}
       {seed?.description && <p>{seed.description}</p>}
+      <Flags mint={mint} detail />
+      {st && (
+        <div className="hero3" aria-label="Live numbers">
+          <div><span>Market cap</span><Flash v={st.mcap}>{usd(st.mcap)}</Flash></div>
+          <div><span>Volume 1h</span><Flash v={st.vol}>{usd(st.vol)}</Flash></div>
+          <div><span>Liquidity</span><Flash v={ch?.vSol != null && solUsd ? ch.vSol * solUsd : (tv?.liquidityUsd ?? null)}>{usd(ch?.vSol != null && solUsd ? ch.vSol * solUsd : (tv?.liquidityUsd ?? null))}</Flash></div>
+        </div>
+      )}
       {st ? (
         <div className="grid4">
           <div className="cell"><span>Market cap</span><b>{usd(st.mcap)}</b></div>

@@ -144,8 +144,10 @@ class Book {
       const { market, chain } = this.d;
       const mkt = await market.getTokenMarket(mint);
       if (!mkt) return { ok: false, why: 'no SOL-quoted market found' };
-      if (mkt.liquidityUsd < config.MIN_LIQUIDITY_USD) return { ok: false, why: `liquidity $${Math.round(mkt.liquidityUsd)} < $${config.MIN_LIQUIDITY_USD}` };
-      if (config.MAX_POOL_SHARE_PCT > 0 && plan.sizeUsd > (mkt.liquidityUsd * config.MAX_POOL_SHARE_PCT) / 100) return { ok: false, why: `size $${plan.sizeUsd} is more than ${config.MAX_POOL_SHARE_PCT}% of the pool ($${Math.round(mkt.liquidityUsd)})` };
+      // for coins on pump.fun's curve the 'liquidity' we know is the curve's VIRTUAL reserve (about 30 SOL at launch), not real money in a pool, so these two checks only apply elsewhere
+      const curveCoin = mkt.source === 'own';
+      if (!curveCoin && mkt.liquidityUsd < config.MIN_LIQUIDITY_USD) return { ok: false, why: `liquidity $${Math.round(mkt.liquidityUsd)} < $${config.MIN_LIQUIDITY_USD}` };
+      if (!curveCoin && config.MAX_POOL_SHARE_PCT > 0 && plan.sizeUsd > (mkt.liquidityUsd * config.MAX_POOL_SHARE_PCT) / 100) return { ok: false, why: `size $${plan.sizeUsd} is more than ${config.MAX_POOL_SHARE_PCT}% of the pool ($${Math.round(mkt.liquidityUsd)})` };
       // coins still on pump.fun's curve (our own feed) are controlled by the pump.fun program itself, so the authority check only applies elsewhere
       if (config.REQUIRE_NO_AUTHORITIES && !opts.manual && mkt.source !== 'own') {
         const mi = await chain.getMintInfo(mint);

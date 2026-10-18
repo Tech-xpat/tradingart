@@ -38,6 +38,7 @@ function onMessage(m) {
   if (tx !== 'create' && tx !== 'buy' && tx !== 'sell' && tx !== 'migrate') return;
   const e = entry(m.mint);
   if (tx === 'create') {
+    if (typeof m.traderPublicKey === 'string' && m.traderPublicKey.length >= 32) e.dev = m.traderPublicKey; // the launcher, kept so the website can show whether the dev still holds
     e.created = true; e.firstSeen = Date.now(); e.name = m.name || e.name; e.symbol = m.symbol || e.symbol; e.uri = typeof m.uri === 'string' ? m.uri.slice(0, 400) : e.uri;
     if (e.uri) meta.want(e.mint, e.uri); // the picture is fetched in the background, retried until it works
   }
@@ -126,7 +127,7 @@ async function flush(db, limit = 40) {
   if (!rows.length) return 0;
   rows.forEach((e) => { e.dirty = false; });
   try {
-    await db.saveCharts(rows.map((e) => ({ mint: e.mint, name: e.name, symbol: e.symbol, uri: e.uri, created: e.created, first_seen: new Date(e.firstSeen).toISOString(), mcap_sol: e.mcapSol, v_sol: e.vSol, migrated: e.migrated, migrated_at: e.migratedAt ? new Date(e.migratedAt).toISOString() : null, stats: statsOf(e), bars: e.bars.slice(-SAVE_BARS), trades: e.tape.slice(-60), bars_1m: e.bars.length > 12 ? e.m1 : [], bars_5m: e.bars.length > 12 ? e.m5 : [], updated_at: new Date().toISOString() })));
+    await db.saveCharts(rows.map((e) => ({ mint: e.mint, name: e.name, symbol: e.symbol, uri: e.uri, created: e.created, dev: e.dev || null, first_seen: new Date(e.firstSeen).toISOString(), mcap_sol: e.mcapSol, v_sol: e.vSol, migrated: e.migrated, migrated_at: e.migratedAt ? new Date(e.migratedAt).toISOString() : null, stats: statsOf(e), bars: e.bars.slice(-SAVE_BARS), trades: e.tape.slice(-60), bars_1m: e.bars.length > 12 ? e.m1 : [], bars_5m: e.bars.length > 12 ? e.m5 : [], updated_at: new Date().toISOString() })));
   } catch (err) { rows.forEach((e) => { e.dirty = true; }); logger.warn(`chart save failed (run the art_charts SQL in supabase_art.sql): ${err.message}`); return 0; }
   return rows.length;
 }

@@ -158,6 +158,29 @@ export default function RobotTab({ me, refresh, run, busy, say, sign, openSheet 
   return (
     <div className="robot">
       <div className="stack">
+        {/* proof that real money moves: every live trade with its on-chain transaction, and the vault itself on a public explorer */}
+        {me.vault && (
+          <div className="card liveproof" aria-label="Live proof">
+            <h3>Live proof</h3>
+            <p className="hint">Anyone can check these on the public Solana explorer, without trusting this app. Paper trades never appear here.</p>
+            <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
+              <a className="btn btn-gold sm" href={`https://solscan.io/account/${me.vault.address}`} target="_blank" rel="noreferrer">Open my vault on Solscan</a>
+              <span className="mono">{short(me.vault.address)} · {sol(me.vault.balanceSol, 4)} SOL now</span>
+            </div>
+            {(() => {
+              const liveOpenList: any[] = trades?.live.open || [];
+              const liveDone = (trades?.trades || []).filter((t: any) => !t.paper).slice(0, 6);
+              if (!liveOpenList.length && !liveDone.length) return <p className="hint">No live trades yet. When one happens it will appear here with its transaction links. Until then the robot is {s.live ? 'set to Live but has not entered a trade' : 'in practice mode'}.</p>;
+              return (
+                <div className="proofrows">
+                  {liveOpenList.map((p: any) => <div key={p.mint} className="proofrow"><b>OPEN</b><span className="mono">{short(p.mint)} · {sol(p.sizeSol, 4)} SOL</span>{p.buySig ? <a href={`https://solscan.io/tx/${p.buySig}`} target="_blank" rel="noreferrer">buy tx ↗</a> : <span>no tx yet</span>}</div>)}
+                  {liveDone.map((t: any) => <div key={t.id} className="proofrow"><b className={t.realized_sol >= 0 ? 'up' : 'dn'}>{t.realized_sol >= 0 ? '+' : ''}{sol(t.realized_sol, 4)} SOL</b><span className="mono">{short(t.mint)} · {ago(Date.now() - Date.parse(t.created_at))} ago</span>
+                    {t.buy_sig ? <a href={`https://solscan.io/tx/${t.buy_sig}`} target="_blank" rel="noreferrer">buy ↗</a> : null}{t.sell_sig ? <a href={`https://solscan.io/tx/${t.sell_sig}`} target="_blank" rel="noreferrer">sell ↗</a> : null}</div>)}
+                </div>
+              );
+            })()}
+          </div>
+        )}
         {/* service status: says plainly why trades or withdrawals may be waiting */}
         {!me.workerUnknown && (!me.worker || !me.worker.online) && (
           <div className="rbar warnbar" role="status"><div className="rtxt"><b>Robot service is not reporting in</b>

@@ -99,7 +99,7 @@ async def main():
                 assert await pg.locator(".col:nth-child(3) .tkcard").count() == 1, "migration shows up"
             # each card carries figures + a risk bar together, and token images are the small proxied thumbnails
             assert await pg.locator(".tkcard .riskbar").count() == await pg.locator(".tkcard").count(), "every card has a risk bar"
-            first = await pg.locator(".tkcard").first.inner_text(); assert "Price" in first and "MC" in first and "Vol" in first and "Liq" in first, first
+            first = await pg.locator(".tkcard").first.inner_text(); assert "PRICE" in first.upper() and "MARKET CAP" in first.upper() and "VOLUME" in first.upper() and "LIQUIDITY" in first.upper(), first
             await pg.wait_for_selector(".tkcard img", timeout=15000)
             imgs = await pg.locator(".tkcard img").evaluate_all("els => els.map(e => e.src)")
             assert imgs and all("/api/img?" in i for i in imgs), imgs

@@ -17,7 +17,7 @@ const MAX_BYTES = 6 * 1024 * 1024;
 export async function GET(req: NextRequest) {
   if (rateLimited(`img:${ipOf(req)}`, 400, 60_000)) return fail('slow down', 429);
   const raw = req.nextUrl.searchParams.get('u') || '';
-  const w = Math.min(160, Math.max(24, Number(req.nextUrl.searchParams.get('w')) || 64));
+  const w = Math.min(320, Math.max(24, Number(req.nextUrl.searchParams.get('w')) || 64));
   if (!candidates(raw).length) return fail('host not allowed', 403);
   try {
     const got = await fetchFirst(raw, { accept: 'image/*', maxBytes: MAX_BYTES });

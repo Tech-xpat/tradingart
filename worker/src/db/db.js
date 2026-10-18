@@ -34,7 +34,12 @@ function createDb(sb) {
       ok(await sb.from('art_state').upsert({ user_id: userId, key, value, updated_at: new Date().toISOString() }, { onConflict: 'user_id,key' }), 'setState');
     },
     async heartbeat(row) { ok(await sb.from('art_worker').upsert({ id: 'main', beat: new Date().toISOString(), ...row }, { onConflict: 'id' }), 'heartbeat'); },
-    async saveCharts(rows) { ok(await sb.from('art_charts').upsert(rows, { onConflict: 'mint' }), 'saveCharts'); },
+    async saveCharts(rows) {
+      const r = await sb.from('art_charts').upsert(rows, { onConflict: 'mint' });
+      // the dev column is newer: if the SQL was not re-run yet, save everything else instead of losing the charts
+      if (r.error && /dev/.test(r.error.message || '')) { ok(await sb.from('art_charts').upsert(rows.map(({ dev, ...rest }) => rest), { onConflict: 'mint' }), 'saveCharts'); return; }
+      ok(r, 'saveCharts');
+    },
     async saveMeta(rows) { ok(await sb.from('art_charts').upsert(rows, { onConflict: 'mint' }), 'saveMeta'); },
     async pruneCharts() { ok(await sb.from('art_charts').delete().lt('updated_at', new Date(Date.now() - Number(process.env.CHART_KEEP_HOURS || 48) * 3600e3).toISOString()), 'pruneCharts'); },
     async insertTrade(row) { ok(await sb.from('art_trades').insert(row), 'insertTrade'); },
