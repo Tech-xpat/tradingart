@@ -106,7 +106,7 @@ class Book {
           retryable = true;
           e = new Error(`buy did not land: ${verdict.reason} (${e.signature})`);
         }
-        if (!retryable || attempt >= attempts) throw e;
+        if (e.fatal || !retryable || attempt >= attempts) throw e;
         logger.info(`[${this.tag}] buy attempt ${attempt} failed (${String(e.message).slice(0, 90)}); retrying with a higher fee and slippage`);
       }
     }

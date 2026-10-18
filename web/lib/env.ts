@@ -20,7 +20,7 @@ export const LIMITS = {
   maxPositionSol: { min: 0.005, max: 1000 },
   maxDailyLossPct: { min: 1, max: 50 },
   maxConcurrent: { min: 1, max: 10 },
-  minVaultSolForLive: 0.015,
+  minVaultSolForLive: 0.02,
   minSizeUsd: 1,
   defaultSizeUsd: 7,
 };

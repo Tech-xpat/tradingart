@@ -37,15 +37,44 @@ async function statusOf(signature) {
   return null;
 }
 
+/** Plain-words reason for a failed simulation. */
+function explainSim(err, logs) {
+  const text = (logs || []).join(' ');
+  const code = err && err.InstructionError && err.InstructionError[1] && err.InstructionError[1].Custom;
+  if (/insufficient lamports|insufficient funds|InsufficientFunds/i.test(text + JSON.stringify(err))) return { fatal: true, why: 'the vault does not have enough SOL for this buy plus fees and account rent. Deposit more SOL or lower the trade size' };
+  if (err === 'InsufficientFundsForRent' || (err && err.InsufficientFundsForRent)) return { fatal: true, why: 'the vault would drop below the minimum SOL Solana requires. Deposit more SOL or lower the trade size' };
+  if (code === 6002 || code === 6003 || /TooMuchSolRequired|TooLittleSolReceived|slippage/i.test(text)) return { fatal: false, why: 'the price moved past the allowed slippage' };
+  if (code === 6005 || /BondingCurveComplete/i.test(text)) return { fatal: false, why: 'the coin just left pump.fun for a regular pool' };
+  const tail = (logs || []).filter((l) => /fail|error|insufficient/i.test(l)).slice(-1)[0] || '';
+  return { fatal: false, why: `rejected by the network: ${JSON.stringify(err)} ${tail}`.slice(0, 220) };
+}
+
+/**
+ * Ask the network to dry-run the signed tx BEFORE sending it, so a doomed buy fails in a second with its real reason
+ * instead of timing out as "never landed". If the check itself cannot run (RPC trouble), we just send.
+ */
+async function preflight(tx) {
+  let res;
+  try { res = await rpc((c) => c.simulateTransaction(tx, { sigVerify: false, commitment: 'confirmed' })); } catch (_) { return null; }
+  const v = res && res.value;
+  if (!v || !v.err) return null;
+  if (v.err === 'BlockhashNotFound') return null; // the node just has not seen the blockhash yet
+  return explainSim(v.err, v.logs);
+}
+
 /**
  * Sign, send (and keep re-sending) until the chain says confirmed or failed.
  * Throws an Error carrying .signature. .onchainError=true means it landed and FAILED.
  * .timedOut=true means we do not know yet: the tx might still land.
  */
-async function landTx(tx, wallet, timeoutMs) {
+async function landTx(tx, wallet, timeoutMs, opts = {}) {
   tx.sign([wallet]);
   const raw = tx.serialize();
   const signature = signatureOf(tx);
+  if (opts.preflight) {
+    const bad = await preflight(tx);
+    if (bad) { const err = new Error(`buy rejected before sending: ${bad.why}`); err.notSent = true; err.fatal = bad.fatal; throw err; }
+  }
   try {
     await broadcast(raw);
   } catch (e) {
@@ -119,7 +148,7 @@ async function buy(wallet, mint, sol, attempt = 1) {
     slippage: p.slippage,
     priorityFee: p.priorityFee,
   });
-  return landTx(tx, wallet, config.BUY_CONFIRM_TIMEOUT_MS);
+  return landTx(tx, wallet, config.BUY_CONFIRM_TIMEOUT_MS, { preflight: true });
 }
 
 function sellParams(attempt = 1) {
@@ -155,4 +184,4 @@ async function routeCheck(wallet, mint, sol) {
   return true;
 }
 
-module.exports = { buildTx, landTx, waitForSignature, statusOf, buy, buyParams, sellAll, sellParams, routeCheck };
+module.exports = { buildTx, landTx, waitForSignature, statusOf, buy, buyParams, preflight, explainSim, sellAll, sellParams, routeCheck };
