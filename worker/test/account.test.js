@@ -144,3 +144,25 @@ test('every scan leaves a plain-language status, and says why live is not runnin
   a.noteScan({ candidates: 12, matched: 0, outcome: 'none matched your plan this round' });
   assert.strictEqual(saved.status.candidates, 12); assert.strictEqual(saved.status.book, 'paper'); assert.ok(saved.status.note);
 });
+
+test('live buy retries with a higher fee after a dropped tx, and never double-buys', async () => {
+  const deps = fakeDeps(); const calls = [];
+  deps.chain.getSolLamports = async () => 1_000_000_000n;
+  deps.swap = {
+    async buy(_s, _m, _sol, attempt) {
+      calls.push(attempt);
+      if (attempt === 1) { const e = new Error('not confirmed'); e.signature = 'SIG1'; e.timedOut = true; throw e; }
+      return 'SIG2';
+    },
+    async waitForSignature() { return { ok: false, reason: 'never landed (tx expired)' }; },
+  };
+  deps.fills = { async readFill() { return { failed: false, tokenDeltaRaw: 5000n, decimals: 6, solDeltaLamports: -50_000_000n }; } };
+  const a = mk(deps, { vault: 'VAULT' }); a.getSigner = async () => ({});
+  const r = await a.books.live.liveBuy(MINT, 0.05);
+  assert.deepStrictEqual(calls, [1, 2]); assert.strictEqual(r.signature, 'SIG2');
+  // if the first one actually landed late, the second is never sent
+  calls.length = 0;
+  deps.chain.getTokenBalance = async () => ({ raw: 9n, decimals: 6 });
+  const r2 = await a.books.live.liveBuy(MINT, 0.05);
+  assert.deepStrictEqual(calls, [1]); assert.strictEqual(r2.signature, 'SIG1');
+});

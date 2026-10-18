@@ -88,13 +88,27 @@ class Book {
     const owner = this.acct.vaultAddress;
     const solBefore = await chain.getSolLamports(owner);
     let sig;
-    try {
-      sig = await swap.buy(signer, mint, sol);
-    } catch (e) {
-      if (!e.signature || e.onchainError || e.notSent) throw e;
-      const verdict = await swap.waitForSignature(e.signature, 75000);
-      if (!verdict.ok) throw new Error(`buy did not land: ${verdict.reason} (${e.signature})`);
-      sig = e.signature;
+    const attempts = Math.max(1, config.BUY_ATTEMPTS || 1);
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        sig = await swap.buy(signer, mint, sol, attempt);
+        break;
+      } catch (e) {
+        // Failed on-chain (e.g. price moved past slippage) or never sent: retry with more slippage and a higher fee.
+        // Sent but unconfirmed: wait until the old tx has certainly expired, and only then try again (never a double buy).
+        let retryable = !!(e.notSent || e.onchainError || !e.signature);
+        if (e.signature && !e.onchainError && !e.notSent) {
+          const verdict = await swap.waitForSignature(e.signature, 75000);
+          if (verdict.ok) { sig = e.signature; break; }
+          let held = { raw: 0n };
+          try { held = await chain.getTokenBalance(owner, mint); } catch (_) {}
+          if (held.raw > 0n) { sig = e.signature; break; }
+          retryable = true;
+          e = new Error(`buy did not land: ${verdict.reason} (${e.signature})`);
+        }
+        if (!retryable || attempt >= attempts) throw e;
+        logger.info(`[${this.tag}] buy attempt ${attempt} failed (${String(e.message).slice(0, 90)}); retrying with a higher fee and slippage`);
+      }
     }
     const fill = await fills.readFill(sig, owner, mint);
     if (fill && !fill.failed && fill.tokenDeltaRaw > 0n && fill.solDeltaLamports != null && fill.solDeltaLamports < 0n) {

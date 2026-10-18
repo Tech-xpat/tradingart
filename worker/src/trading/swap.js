@@ -102,14 +102,22 @@ async function waitForSignature(signature, maxMs = 75000) {
 const solAmount = (sol) => Number(Number(sol).toFixed(6));
 
 /** Buy `sol` SOL worth of `mint`. Resolves to the confirmed signature. */
-async function buy(wallet, mint, sol) {
+function buyParams(attempt = 1) {
+  return {
+    slippage: Math.min(config.BUY_SLIPPAGE_PCT + config.BUY_SLIPPAGE_STEP_PCT * (attempt - 1), config.BUY_SLIPPAGE_MAX_PCT),
+    priorityFee: Number((config.BUY_PRIORITY_FEE_SOL * attempt).toFixed(6)),
+  };
+}
+
+async function buy(wallet, mint, sol, attempt = 1) {
+  const p = buyParams(attempt);
   const tx = await buildTx(wallet, {
     action: 'buy',
     mint,
     amount: solAmount(sol),
     denominatedInSol: 'true',
-    slippage: config.BUY_SLIPPAGE_PCT,
-    priorityFee: config.BUY_PRIORITY_FEE_SOL,
+    slippage: p.slippage,
+    priorityFee: p.priorityFee,
   });
   return landTx(tx, wallet, config.BUY_CONFIRM_TIMEOUT_MS);
 }
@@ -147,4 +155,4 @@ async function routeCheck(wallet, mint, sol) {
   return true;
 }
 
-module.exports = { buildTx, landTx, waitForSignature, statusOf, buy, sellAll, sellParams, routeCheck };
+module.exports = { buildTx, landTx, waitForSignature, statusOf, buy, buyParams, sellAll, sellParams, routeCheck };
