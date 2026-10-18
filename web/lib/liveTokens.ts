@@ -31,6 +31,12 @@ const localTrades = new Map<string, LiveTrade[]>();
 let tradeSeq = 0;
 export const getLocalTrades = (mint: string): LiveTrade[] => localTrades.get(mint) || [];
 const seenSigs = new Set<string>();
+/** Price change over the last `sec` seconds from the candles this browser built. */
+export function localChange(mint: string, sec: number): number {
+  const b = localBars.get(mint); if (!b || b.length < 2) return 0;
+  const cut = Date.now() / 1000 - sec; let ref = b[0][1]; for (const x of b) if (x[0] >= cut) { ref = x[1]; break; }
+  return ref > 0 ? ((b[b.length - 1][4] - ref) / ref) * 100 : 0;
+}
 export function recordTrade(m: any) {
   if (!m || typeof m.mint !== 'string') return;
   if (typeof m.signature === 'string') { if (seenSigs.has(m.signature)) return; seenSigs.add(m.signature); if (seenSigs.size > 4000) seenSigs.delete(seenSigs.values().next().value as string); } // two sockets can carry the same trade
@@ -66,6 +72,8 @@ export function useLiveTokens() {
   const [solUsd, setSolUsd] = useState<number | null>(null);
   const [hot, setHot] = useState<Hot[]>([]);
   const [topProgress, setTopProgress] = useState<number | null>(null);
+  const [surgeSrv, setSurgeSrv] = useState<Hot[]>([]);
+  const [boardErr, setBoardErr] = useState<string | null>(null);
   const failures = useRef(0);
   const metaQ = useRef<string[]>([]); const metaBusy = useRef(0); const metaTries = useRef(new Map<string, number>());
 
@@ -189,7 +197,7 @@ export function useLiveTokens() {
     let stop = false;
     const go = async () => {
       try {
-        const r = await fetch('/api/board', { cache: 'no-store' }); if (!r.ok) return; const j = await r.json(); if (stop) return;
+        const r = await fetch('/api/board', { cache: 'no-store' }); if (!r.ok) { if (!stop) setBoardErr(r.status === 503 ? 'setup' : 'down'); return; } const j = await r.json(); if (stop) return; setBoardErr(null);
         if (typeof j.solUsd === 'number') setSolUsd(j.solUsd);
         const apply = (rows: any[]) => {
           for (const x of rows || []) {
@@ -207,8 +215,9 @@ export function useLiveTokens() {
             if (!x.thumb && !t.image && t.uri) { metaQ.current.push(x.mint); }
           }
         };
-        apply(j.new); apply(j.stretch); apply(j.migrated); apply(j.trending);
+        apply(j.new); apply(j.stretch); apply(j.migrated); apply(j.trending); apply(j.surge);
         setHot((j.trending || []).map((x: any) => ({ mint: x.mint, name: x.name, symbol: x.symbol, thumb: !!x.thumb, image: x.image, mcapSol: x.mcapSol, c5: x.stats?.c5 || 0, trades: (x.stats?.buys1h || 0) + (x.stats?.sells1h || 0) })));
+        setSurgeSrv((j.surge || []).map((x: any) => ({ mint: x.mint, name: x.name, symbol: x.symbol, thumb: !!x.thumb, image: x.image, mcapSol: x.mcapSol, c5: x.stats?.c5 || 0, trades: (x.stats?.buys1h || 0) + (x.stats?.sells1h || 0) })));
         setTopProgress(typeof j.topProgress === 'number' ? j.topProgress : null);
         touch(); pumpMeta();
       } catch { /* the live socket still works */ }
@@ -266,6 +275,9 @@ export function useLiveTokens() {
     return () => { stop = true; clearTimeout(first); clearInterval(id); };
   }, []);
 
+  /* Trending and Surge also work from what this browser sees live, so the strips are never empty while the market is moving */
+  const trendingLocal = useMemo(() => { void tick; return [...store.current.values()].map((t) => ({ t, n: t.buys + t.sells })).filter((x) => x.n >= 3).sort((a, b) => b.n - a.n).slice(0, 12).map(({ t, n }): Hot => ({ mint: t.mint, name: t.name, symbol: t.symbol, thumb: !!t.thumb, image: t.image, mcapSol: t.mcapSol, c5: localChange(t.mint, 300), trades: n })); }, [tick]); // eslint-disable-line react-hooks/exhaustive-deps
+  const surgeLocal = useMemo(() => { void tick; return [...store.current.values()].filter((t) => t.buys + t.sells >= 4).map((t): Hot => ({ mint: t.mint, name: t.name, symbol: t.symbol, thumb: !!t.thumb, image: t.image, mcapSol: t.mcapSol, c5: localChange(t.mint, 300), trades: t.buys + t.sells })).filter((h) => h.c5 > 5).sort((a, b) => b.c5 - a.c5).slice(0, 12); }, [tick]); // eslint-disable-line react-hooks/exhaustive-deps
   const find = useCallback((mint: string) => store.current.get(mint) || null, []);
-  return { status, lists, solUsd, find, tick, hot, topProgress };
+  return { status, lists, solUsd, find, tick, hot: hot.length ? hot : trendingLocal, surge: surgeSrv.length ? surgeSrv : surgeLocal, topProgress, boardErr };
 }

@@ -85,7 +85,7 @@ async def main():
             async def board(route):
                 import time
                 row = lambda n, v: {"mint": n.ljust(44, "A"), "name": n, "symbol": n[:3].upper(), "uri": None, "createdAt": int(time.time()*1000) - 600000, "mcapSol": 60, "vSol": v, "migrated": False, "migratedAt": None, "stats": {"c5": 12.5, "c1h": 30, "volSol1h": 9, "buys1h": 30, "sells1h": 12}, "image": None, "description": None, "thumb": False, "updatedAt": int(time.time()*1000)}
-                await route.fulfill(status=200, content_type="application/json", body=json.dumps({"new": [row("Fresh", 35)], "stretch": [row("Climber", 90)], "migrated": [], "trending": [row("Hotone", 40)], "topProgress": 0.7, "solUsd": 150}))
+                await route.fulfill(status=200, content_type="application/json", body=json.dumps({"new": [row("Fresh", 35)], "stretch": [row("Climber", 90)], "migrated": [], "trending": [row("Hotone", 40)], "surge": [row("Zoomer", 45)], "topProgress": 0.7, "solUsd": 150}))
             await pg.route("**/api/board", board)
             await pg.goto(BASE + "/app"); await pg.wait_for_timeout(1500)
             # --- tokens tab (default, works signed out) ---
@@ -108,7 +108,7 @@ async def main():
             await pg.wait_for_timeout(4600)
             pg2 = await ctx.new_page()
             await pg2.route_web_socket("wss://pumpportal.fun/**", lambda ws: ws.close())
-            await pg.wait_for_selector(".tchip", timeout=6000); assert await pg.locator(".tchip").count() >= 1, "trending strip"
+            await pg.wait_for_selector(".tchip", timeout=6000); assert await pg.locator(".tchip").count() >= 2, "trending and surge strips"; await pg.wait_for_selector("text=Zoomer", state="attached")
             await pg.wait_for_selector("section[aria-label='Final stretch'] >> text=Climber", state="attached", timeout=6000)
             await pg2.goto(BASE + "/app")
             await pg2.wait_for_selector(".tkcard", timeout=5000)

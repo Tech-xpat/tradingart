@@ -177,6 +177,10 @@ function WatchPanel({ mint, symbol, mcapUsd, me, onSaved, goRobot, onClose }: { 
 function TokenSheet({ mint, seed, solUsd, me, onSaved, goRobot, onClose }: { mint: string; seed: Tok | null; solUsd: number | null; me: Me | null; onSaved: () => Promise<unknown>; goRobot: () => void; onClose: () => void }) {
   const [watch, setWatch] = useState(false);
   const [trader, setTrader] = useState<string | null>(null);
+  const [older, setOlder] = useState<Tr[]>([]);
+  const [cursor, setCursor] = useState<string | null | undefined>(undefined); // undefined = not started, null = reached the beginning
+  const [loadingOld, setLoadingOld] = useState(false); const [oldErr, setOldErr] = useState<string | null>(null);
+  const [filled, setFilled] = useState(0);
   const [ch, setCh] = useState<ChartRow | null>(null);
   const [tv, setTv] = useState<TokenView | null>(seed?.dex || null);
   const [err, setErr] = useState<string | null>(null);
@@ -191,6 +195,21 @@ function TokenSheet({ mint, seed, solUsd, me, onSaved, goRobot, onClose }: { min
     go(); const id = setInterval(go, 3000);
     return () => { stop = true; clearInterval(id); };
   }, [mint]);
+  // A coin our robot never watched has no recorded chart: read its latest trades from the chain once, then reload the chart.
+  useEffect(() => {
+    if (!loaded || (ch && ch.bars.length >= 8)) return; let stop = false;
+    fetch(`/api/backfill?mint=${mint}`, { method: 'POST' }).then((r) => r.json()).then((j) => { if (!stop && j && j.ok && j.count) { setFilled((x) => x + 1); api<{ chart: ChartRow | null }>(`/api/chart?mint=${mint}`).then((r) => { if (!stop) setCh(r.chart); }, () => {}); } }).catch(() => {});
+    return () => { stop = true; };
+  }, [loaded, mint]); // eslint-disable-line react-hooks/exhaustive-deps
+  const loadOlder = async () => {
+    setLoadingOld(true); setOldErr(null);
+    try {
+      const last = older.length ? older[older.length - 1] : null;
+      const before = cursor ?? undefined;
+      const r = await api<{ trades: { sig: string; t: number; side: 'buy' | 'sell'; sol: number; mcapSol: number; who: string }[]; next: string | null }>(`/api/history?mint=${mint}${before ? `&before=${before}` : ''}`);
+      setOlder((o) => [...o, ...r.trades.map((x) => ({ t: x.t, side: x.side, sol: x.sol, mcapSol: x.mcapSol, who: x.who, sig: x.sig.slice(0, 10) }))]); setCursor(r.next); void last;
+    } catch (e: any) { setOldErr(e?.message || 'Could not load'); } finally { setLoadingOld(false); }
+  };
   // The page also listens to this one token's trades directly, so a chart always starts filling the moment the sheet opens.
   const [n, setN] = useState(0);
   useEffect(() => {
@@ -218,9 +237,9 @@ function TokenSheet({ mint, seed, solUsd, me, onSaved, goRobot, onClose }: { min
     const srv: Tr[] = (ch?.trades || []).map((x: any[]) => ({ t: Number(x[0]), side: x[1] === 's' ? 'sell' : 'buy', sol: Number(x[2]) || 0, mcapSol: Number(x[3]) || 0, who: x[4] || undefined, sig: x[5] || undefined }));
     const loc: Tr[] = getLocalTrades(mint).map((x) => ({ t: x.t, side: x.side, sol: x.sol, mcapSol: x.mcapSol, who: x.who, sig: x.sig }));
     const seen = new Set<string>(); const out: Tr[] = [];
-    for (const x of [...loc, ...srv].sort((a, b) => b.t - a.t)) { const k = x.sig ? x.sig : `${Math.round(x.t / 1000)}:${x.sol}:${x.side}`; if (seen.has(k)) continue; seen.add(k); out.push(x); if (out.length >= 80) break; }
+    for (const x of [...loc, ...srv, ...older].sort((a, b) => b.t - a.t)) { const k = x.sig ? x.sig : `${Math.round(x.t / 1000)}:${x.sol}:${x.side}`; if (seen.has(k)) continue; seen.add(k); out.push(x); if (out.length >= 400) break; }
     return out;
-  }, [mint, ch, n]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mint, ch, n, older]); // eslint-disable-line react-hooks/exhaustive-deps
   const recent = trades.slice(0, 40); const bs = recent.filter((x) => x.side === 'buy').reduce((a, x) => a + x.sol, 0), ss = recent.filter((x) => x.side === 'sell').reduce((a, x) => a + x.sol, 0);
   const replay = useMemo(() => (ch?.trades || []).slice(-40).reverse().map((x: any[]) => ({ side: x[1], sol: Number(x[2]) || 0, mcapSol: Number(x[3]) || 0, t: Number(x[0]) })), [ch?.trades?.length]); // eslint-disable-line react-hooks/exhaustive-deps
   // Tokens we have no recorded candles for (older than the robot's watch list) get plain market numbers from our server instead.
@@ -285,6 +304,11 @@ function TokenSheet({ mint, seed, solUsd, me, onSaved, goRobot, onClose }: { min
         <div className="hrow hh"><span>Time</span><span>Type</span><span>SOL</span><span>Market cap</span><span>Trader</span></div>
         <div className="hbody">{trades.map((x, i) => <div key={`${x.sig || x.t}-${i}`} className={`hrow ${x.side}`}><span>{new Date(x.t).toLocaleTimeString([], { hour12: false })}</span><b>{x.side === 'buy' ? 'BUY' : 'SELL'}</b><span>{x.sol.toFixed(2)}</span><span>{solUsd ? usd(x.mcapSol * solUsd) : `${x.mcapSol.toFixed(1)} SOL`}</span>{x.who ? <button className="who" onClick={() => setTrader(x.who!)} aria-label={`Open trader ${short(x.who)}`}>{short(x.who)}</button> : <span>–</span>}</div>)}</div>
       </div>
+      <div className="row" style={{ margin: '6px 0 2px' }}>
+        <button className="btn btn-ghost sm" disabled={loadingOld || cursor === null} onClick={loadOlder}>{loadingOld ? 'Reading the chain…' : cursor === null ? 'Reached the first trade' : older.length ? 'Load older trades' : 'Load full history from the chain'}</button>
+        {oldErr && <span className="hint warn">{oldErr}</span>}
+        {filled > 0 && <span className="hint">Chart rebuilt from the coin's on-chain trades.</span>}
+      </div>
       <p className="hint">Candles are built by our own robot from live trades. New tokens are extremely risky; a token shown here is not a recommendation.</p>
     </Sheet>
   );
@@ -316,20 +340,21 @@ export default function TokensTab({ me, onSaved, goRobot }: { me: Me | null; onS
         <span className={`feedstat ${feed.status}`} title={feed.status === 'fallback' ? 'The live socket could not connect, so this list refreshes every 20 seconds from our server.' : ''}><i />{STATUS_TEXT[feed.status]}</span>
       </div>
       {msg && <div className="note err" role="alert">{msg}</div>}
-      {feed.hot.length > 0 && (
-        <>
-          <div className="trendhead">🔥 Trending now <small className="mono" style={{ color: 'var(--muted)', textTransform: 'none', fontWeight: 500 }}>most trades in the last hour · swipe →</small></div>
-          <div className="trend" role="list" aria-label="Trending coins">
-            {feed.hot.map((h) => (
-              <button key={h.mint} role="listitem" className="tchip" onClick={() => setOpen(h.mint)} aria-label={`Open trending ${h.symbol || h.name || h.mint}`}>
+      {feed.boardErr === 'setup' && <div className="note err" role="alert">The robot's coin records are not set up yet. Run the latest <b>supabase_art.sql</b> in Supabase, then refresh. Until then you only see what this browser catches live.</div>}
+      {([['🔥 Trending now', 'most trades in the last hour · swipe →', feed.hot], ['⚡ Surge', 'biggest 5-minute gains with real activity · swipe →', feed.surge]] as const).map(([title, hint, list]) => list.length > 0 && (
+        <div key={title}>
+          <div className="trendhead">{title} <small className="mono" style={{ color: 'var(--muted)', textTransform: 'none', fontWeight: 500 }}>{hint}</small></div>
+          <div className="trend" role="list" aria-label={title}>
+            {list.map((h) => (
+              <button key={h.mint} role="listitem" className="tchip" onClick={() => setOpen(h.mint)} aria-label={`Open ${title} ${h.symbol || h.name || h.mint}`}>
                 <Avatar t={{ mint: h.mint, thumb: h.thumb, image: h.image, symbol: h.symbol, name: h.name }} />
                 <b>{h.symbol ? `$${h.symbol}` : h.name || 'Token'}</b>
                 <small>{feed.solUsd && h.mcapSol ? usd(h.mcapSol * feed.solUsd) : '–'} · <span className={h.c5 >= 0 ? 'up' : 'dn'}>{h.c5 >= 0 ? '+' : ''}{h.c5.toFixed(0)}%</span> · {h.trades} tx</small>
               </button>
             ))}
           </div>
-        </>
-      )}
+        </div>
+      ))}
       <div className="subtabs" role="tablist">
         <button role="tab" aria-selected={sub === 'new'} className={sub === 'new' ? 'on' : ''} onClick={() => setSub('new')}>New<u>{L.new.length}</u></button>
         <button role="tab" aria-selected={sub === 'stretch'} className={sub === 'stretch' ? 'on' : ''} onClick={() => setSub('stretch')}>Final stretch<u>{L.stretch.length}</u></button>

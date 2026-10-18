@@ -5,6 +5,7 @@
 import test, { before, after } from 'node:test';
 import assert from 'node:assert';
 import http from 'http';
+import { curveOf } from '../lib/pumpchain';
 import { spawn, ChildProcess } from 'child_process';
 import nacl from 'tweetnacl';
 import { Keypair, Transaction, TransactionInstruction, PublicKey } from '@solana/web3.js';
@@ -19,6 +20,7 @@ const { createDb } = require_('../../worker/src/db/db');
 const { processWithdrawal } = require_('../../worker/src/trading/withdraw');
 const { createClient } = require_('../../worker/node_modules/@supabase/supabase-js');
 
+const CHAIN_MINT = 'So11111111111111111111111111111111111111112';
 const WEB = 3111, REST = 54399, RPC = 54398;
 const BASE = `http://localhost:${WEB}`;
 const seal = newSealKeypair();
@@ -57,6 +59,14 @@ before(async () => {
     let raw = ''; req.on('data', (c) => (raw += c));
     req.on('end', () => {
       const call = raw ? JSON.parse(raw) : {};
+      const one = (c: any) => { // chain history for the backfill test: 60 trades of one coin on its bonding curve
+        if (c.method === 'getSignaturesForAddress') { const before = c.params?.[1]?.before; const start = before ? Number(before.slice(-2)) : 0; const n = Math.min(c.params?.[1]?.limit || 40, 60 - start); return { jsonrpc: '2.0', id: c.id, result: Array.from({ length: Math.max(0, n) }, (_, i) => ({ signature: 'S'.repeat(86) + String(start + i + 1).padStart(2, '0'), err: null })) }; }
+        if (c.method === 'getTransaction') { const i = Number(String(c.params[0]).slice(-2)); const buy = i % 3 !== 0; const curve = curveOf(CHAIN_MINT);
+          return { jsonrpc: '2.0', id: c.id, result: { blockTime: Math.floor(Date.now() / 1000) - i * 20, transaction: { signatures: [c.params[0]], message: { accountKeys: ['Trader' + String(i % 4).repeat(30) + 'XXXXXXXX', curve] } },
+            meta: { err: null, preBalances: [5e9, 10e9], postBalances: [5e9, 10e9 + (buy ? 1 : -1) * 0.2e9], preTokenBalances: [{ mint: CHAIN_MINT, owner: curve, uiTokenAmount: { uiAmount: 800e6 } }], postTokenBalances: [{ mint: CHAIN_MINT, owner: curve, uiTokenAmount: { uiAmount: 800e6 + (buy ? -1 : 1) * 1e6 } }] } } }; }
+        return null;
+      };
+      if (Array.isArray(call) || (call.method && one(call))) { const out = Array.isArray(call) ? call.map(one) : one(call); res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify(out)); }
       const result = call.method === 'getLatestBlockhash' ? { context: { slot: 1 }, value: { blockhash: '11111111111111111111111111111111', lastValidBlockHeight: 100 } } : { context: { slot: 1 }, value: rpcLamports };
       res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ jsonrpc: '2.0', id: call.id ?? 1, result }));
     });
@@ -284,6 +294,18 @@ test('board: new / final stretch / migrated / trending come from the robot\'s ow
   assert.strictEqual(j.trending[0].name, 'Hotcoin', 'trending ranks the busiest coin first'); assert.ok(!j.trending.some((x: any) => x.name === 'Quiet'));
   assert.ok(j.topProgress > 0.8);
   assert.strictEqual((await A.call('/api/wallet?addr=not-a-wallet')).status, 400);
+});
+
+test('any coin gets a chart and a full trade history from the public chain, with no chart service', async () => {
+  const A = new Browser();
+  assert.strictEqual((await A.call('/api/history?mint=bad')).status, 400);
+  const h1 = (await A.call(`/api/history?mint=${CHAIN_MINT}`)).json;
+  assert.ok(h1.trades.length >= 20, 'trades read from the chain'); assert.ok(h1.trades.some((t: any) => t.side === 'sell') && h1.trades.some((t: any) => t.side === 'buy'));
+  assert.ok(h1.trades[0].who.startsWith('Trader') && h1.trades[0].mcapSol > 0);
+  assert.ok(h1.next, 'there is an older page'); const h2 = (await A.call(`/api/history?mint=${CHAIN_MINT}&before=${h1.next}`)).json; assert.ok(h2.trades.length >= 1, 'older page loads');
+  const bfr = await A.call(`/api/backfill?mint=${CHAIN_MINT}`, { method: 'POST' }); const bf = bfr.json; assert.ok(bf.ok && bf.count >= 20, JSON.stringify(bf));
+  const row = pg.tables.art_charts.find((r) => r.mint === CHAIN_MINT)!; assert.ok(row.bars.length >= 5 && row.trades.length >= 20 && row.bars_5m.length >= 1);
+  const ch = (await A.call(`/api/chart?mint=${CHAIN_MINT}`)).json.chart; assert.ok(ch.bars.length >= 5 && ch.trades.length >= 20);
 });
 
 test('panic pauses the robot and stamps panic_at for the worker', async () => {

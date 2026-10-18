@@ -32,6 +32,7 @@ export async function GET(req: NextRequest) {
   // trending = busiest in the last hour (SOL traded, then number of trades) among coins that traded in the last 15 minutes
   const heat = (r: any) => (r.stats?.volSol1h || 0) + ((r.stats?.buys1h || 0) + (r.stats?.sells1h || 0)) * 0.02;
   const trending = (hot.data || []).filter((r: any) => (r.stats?.buys1h || 0) + (r.stats?.sells1h || 0) >= 3).sort((a: any, b: any) => heat(b) - heat(a)).slice(0, 15);
+  const surge = (hot.data || []).filter((r: any) => (r.stats?.buys1h || 0) + (r.stats?.sells1h || 0) >= 5 && (r.stats?.c5 || 0) > 0).sort((a: any, b: any) => (b.stats?.c5 || 0) - (a.stats?.c5 || 0)).slice(0, 15);
   const topV = top.data?.[0]?.v_sol ?? null;
-  return json({ trending: trending.map(row), topProgress: topV == null ? null : Math.max(0, Math.min(1, (topV - 30) / 85)), tracked: (fresh.data || []).length, new: (fresh.data || []).map(row), stretch: (stretch.data || []).map(row), migrated: (mig.data || []).map(row), solUsd: await solUsd().catch(() => null) });
+  return json({ trending: trending.map(row), surge: surge.map(row), topProgress: topV == null ? null : Math.max(0, Math.min(1, (topV - 30) / 85)), tracked: (fresh.data || []).length, new: (fresh.data || []).map(row), stretch: (stretch.data || []).map(row), migrated: (mig.data || []).map(row), solUsd: await solUsd().catch(() => null) });
 }
