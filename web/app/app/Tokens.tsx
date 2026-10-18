@@ -120,6 +120,55 @@ function TraderPanel({ addr, trades, solUsd, onClose }: { addr: string; trades: 
 }
 
 /** "Watch with my robot": a one-coin plan. The robot's chart agent looks for the pattern and enters even while you are away. */
+function BuyPanel({ mint, symbol, me, solUsd, goRobot, onClose }: { mint: string; symbol: string | null | undefined; me: Me | null; solUsd: number | null; goRobot: () => void; onClose: () => void }) {
+  const active = me?.settings.plans.find((p) => p.id === me.settings.active_plan) || me?.settings.plans[0];
+  const [amt, setAmt] = useState('0.02');
+  const [tp, setTp] = useState(String(active?.takeProfitPct ?? 20));
+  const [sl, setSl] = useState(String(active?.stopLossPct ?? 12));
+  const [hold, setHold] = useState(String(active?.maxHoldMin ?? 6));
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ k: 'wait' | 'ok' | 'err'; t: string } | null>(null);
+  const live = !!me?.settings.live;
+  const sol = Number(amt);
+  const buy = async () => {
+    setBusy(true); setMsg({ k: 'wait', t: 'Sending your order to the robot…' });
+    try {
+      const r = await api('/api/order', { method: 'POST', body: JSON.stringify({ mint, sizeSol: sol, tpPct: tp, slPct: sl, holdMin: hold }) });
+      const t0 = Date.now();
+      for (;;) {
+        await new Promise((res) => setTimeout(res, 1500));
+        const o = await api(`/api/order?id=${r.id}`);
+        if (o.status === 'done') { setMsg({ k: 'ok', t: `✅ ${o.result}` }); break; }
+        if (o.status === 'failed' || o.stale) { setMsg({ k: 'err', t: `Not bought: ${o.result}` }); break; }
+        if (Date.now() - t0 > 240_000) { setMsg({ k: 'err', t: 'Still waiting. Check the Robot tab for the result.' }); break; }
+        setMsg({ k: 'wait', t: o.status === 'processing' ? (live ? 'The robot is buying with real funds. This can take up to a minute…' : 'The robot is buying…') : 'Waiting for the robot to pick up your order…' });
+      }
+    } catch (e: any) { setMsg({ k: 'err', t: e?.message || 'Could not send the order' }); } finally { setBusy(false); }
+  };
+  if (!me) return (<div className="watchbox"><b>Buy {symbol ? '$' + symbol : 'this coin'}</b><p className="hint">Connect your wallet and sign in first. Buys use your own vault under the limits you signed.</p><div className="row"><button className="btn sm" onClick={onClose}>Close</button></div></div>);
+  return (
+    <div className="watchbox">
+      <b>Buy {symbol ? '$' + symbol : short(mint)} now</b>
+      <p className="hint">{live ? 'Live mode: this spends real SOL from your vault.' : 'Practice mode: a simulated buy, no real money. Switch to live on the Robot tab.'} The robot sells at your take profit, stop loss or time limit below. Your signed safety limits cap the size.</p>
+      <div className="row" style={{ flexWrap: 'wrap', gap: 6, margin: '4px 0' }}>
+        {['0.01', '0.02', '0.05', '0.1'].map((v) => <button key={v} className={`btn sm ${amt === v ? 'btn-gold' : ''}`} onClick={() => setAmt(v)} aria-label={`Use ${v} SOL`}>{v} SOL</button>)}
+      </div>
+      <div className="fgrid">
+        <div><span className="lbl">Amount (SOL){solUsd && sol > 0 ? ` ≈ $${(sol * solUsd).toFixed(2)}` : ''}</span><input className="field" inputMode="decimal" aria-label="Buy amount in SOL" value={amt} onChange={(e) => setAmt(e.target.value)} /></div>
+        <div><span className="lbl">Take profit (%)</span><input className="field" inputMode="decimal" aria-label="Buy take profit" value={tp} onChange={(e) => setTp(e.target.value)} /></div>
+        <div><span className="lbl">Stop loss (%)</span><input className="field" inputMode="decimal" aria-label="Buy stop loss" value={sl} onChange={(e) => setSl(e.target.value)} /></div>
+        <div><span className="lbl">Sell after at most (min)</span><input className="field" inputMode="decimal" aria-label="Buy hold minutes" value={hold} onChange={(e) => setHold(e.target.value)} /></div>
+      </div>
+      {msg && <div className={`note ${msg.k === 'ok' ? 'ok' : msg.k === 'err' ? 'err' : ''}`} role="status">{msg.t}</div>}
+      <div className="row">
+        <button className="btn btn-gold" disabled={busy || !(sol >= 0.001)} onClick={buy}>{busy ? 'Working…' : `Buy ${Number.isFinite(sol) ? sol : ''} SOL`}</button>
+        <button className="btn sm" onClick={goRobot}>Robot tab</button>
+        <button className="btn sm" onClick={onClose}>Close</button>
+      </div>
+    </div>
+  );
+}
+
 function WatchPanel({ mint, symbol, mcapUsd, me, onSaved, goRobot, onClose }: { mint: string; symbol: string | null | undefined; mcapUsd: number | null; me: Me | null; onSaved: () => Promise<unknown>; goRobot: () => void; onClose: () => void }) {
   const lim = me?.limits;
   const active = me?.settings.plans.find((p) => p.id === me.settings.active_plan) || me?.settings.plans[0];
@@ -176,6 +225,7 @@ function WatchPanel({ mint, symbol, mcapUsd, me, onSaved, goRobot, onClose }: { 
 
 function TokenSheet({ mint, seed, solUsd, me, onSaved, goRobot, onClose }: { mint: string; seed: Tok | null; solUsd: number | null; me: Me | null; onSaved: () => Promise<unknown>; goRobot: () => void; onClose: () => void }) {
   const [watch, setWatch] = useState(false);
+  const [buying, setBuying] = useState(false);
   const [trader, setTrader] = useState<string | null>(null);
   const [older, setOlder] = useState<Tr[]>([]);
   const [cursor, setCursor] = useState<string | null | undefined>(undefined); // undefined = not started, null = reached the beginning
@@ -271,8 +321,10 @@ function TokenSheet({ mint, seed, solUsd, me, onSaved, goRobot, onClose }: { min
         </div>
       </div>
       <div className="row" style={{ margin: '4px 0 10px' }}>
+        <button className="btn btn-gold sm" onClick={() => setBuying((w) => !w)} aria-expanded={buying}>Buy now</button>
         <button className="btn btn-gold sm" onClick={() => setWatch((w) => !w)} aria-expanded={watch}>🤖 Watch with my robot</button>
       </div>
+      {buying && <BuyPanel mint={mint} symbol={symbol} me={me} solUsd={solUsd} goRobot={goRobot} onClose={() => setBuying(false)} />}
       {watch && <WatchPanel mint={mint} symbol={symbol} mcapUsd={st?.mcap ?? tv?.marketCapUsd ?? null} me={me} onSaved={onSaved} goRobot={goRobot} onClose={() => setWatch(false)} />}
       {seed?.description && <p>{seed.description}</p>}
       {st ? (

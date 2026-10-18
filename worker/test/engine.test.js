@@ -5,7 +5,7 @@ const { Engine } = require('../src/engine');
 const MINT = 'MintMintMintMintMintMintMintMintMintMint1';
 function mkEngine(users) {
   const state = new Map(); const sent = []; const picks = [];
-  const settings = users.map((u) => ({ user_id: u.id, plans: u.plans, active_plan: u.plan, paused: !!u.paused, live: false, max_position_sol: 0.05, max_daily_loss_pct: 20, max_concurrent: 1, panic_at: u.panic_at || null }));
+  const settings = users.map((u) => ({ user_id: u.id, plans: u.plans, active_plan: u.plan || 'steady', paused: !!u.paused, live: false, max_position_sol: 0.05, max_daily_loss_pct: 20, max_concurrent: 1, panic_at: u.panic_at || null }));
   const db = {
     async settingsRunning() { return settings.filter((s) => !s.paused); },
     async usersWithOpenPositions() { return [...state.entries()].filter(([k, v]) => k.endsWith('positions') && v.length).map(([k]) => k.split('|')[0]); },
@@ -101,5 +101,43 @@ test('a watcher plan looks at its one coin only, and ignores the age window', as
   feed(mint, SHAPE); collector.onMessage({ txType: 'buy', mint, marketCapSol: SHAPE[SHAPE.length - 1], solAmount: 0.1 });
   eng.accounts.get('a').nextAgentAt = 0; await eng.agentTick();
   assert.strictEqual(sent.length, 1, JSON.stringify(sent)); assert.match(sent[0][1], /ENTERED WatchM/);
+  collector._reset();
+});
+
+test('a manual buy from the website runs even while the robot is paused, inside the limits, and reports back', async () => {
+  const { eng, state } = mkEngine([{ id: 'a', chat: 1, paused: true }]);
+  const orders = [{ id: 'o1', user_id: 'a', mint: MINT, size_sol: 0.02, tp_pct: 15, sl_pct: 9, hold_min: 3, status: 'pending' }];
+  const done = {};
+  eng.db.pendingOrders = async () => orders.filter((o) => o.status === 'pending');
+  eng.db.claimOrder = async (id) => { const o = orders.find((x) => x.id === id); if (o.status !== 'pending') return false; o.status = 'processing'; return true; };
+  eng.db.finishOrder = async (id, patch) => { Object.assign(orders.find((x) => x.id === id), patch); done[id] = patch; };
+  await eng.orderTick();
+  assert.strictEqual(done.o1.status, 'done', JSON.stringify(done.o1));
+  assert.match(done.o1.result, /paper/);
+  const pos = eng.accounts.get('a').positions()[0];
+  assert.strictEqual(pos.takeProfitPct, 15); assert.strictEqual(pos.stopLossPct, 9); assert.strictEqual(pos.maxHoldMin, 3);
+  assert.ok(pos.sizeSol > 0 && pos.sizeSol <= 0.02 + 1e-9);
+  // a second order for the same coin is refused with a plain reason
+  orders.push({ id: 'o2', user_id: 'a', mint: MINT, size_sol: 0.02, status: 'pending' });
+  await eng.orderTick();
+  assert.strictEqual(done.o2.status, 'failed');
+});
+
+test('the default Rider plan buys a rising coin from the hot groups, and ignores a rising coin that is not hot', async () => {
+  const collector = require('../src/data/collector'); const { addTrade } = require('../src/charting');
+  const { sanitizePlan, RIDER } = require('../src/planrules');
+  collector._reset(); collector.setSolUsd(200);
+  const rider = { ...sanitizePlan({ ...RIDER, id: 'rider', agent: { ...RIDER.agent, tfSec: 5 } }), id: 'rider' };
+  assert.strictEqual(rider.agent.pattern, 'momentum'); assert.strictEqual(rider.agent.source, 'any');
+  const { eng, sent } = mkEngine([{ id: 'a', chat: 1, plans: [rider], plan: 'rider' }]);
+  await eng.sync();
+  const closes = [20, 20, 20.2, 20, 20.2, 20, 20.2, 20, 20.4, 20.8, 21.2, 21.6];
+  const feed = (m, vSol) => { collector.onMessage({ txType: 'create', mint: m, name: 'X', marketCapSol: closes[0], vSolInBondingCurve: vSol, solAmount: 1 }); const e = collector.barsFor(m); e.length = 0; closes.forEach((p, i) => addTrade(e, { t: Date.now() / 1000 - (closes.length - i) * 5, p, v: 1, side: 'buy' })); collector.onMessage({ txType: 'buy', mint: m, marketCapSol: 21.6, vSolInBondingCurve: vSol, solAmount: 0.1 }); };
+  feed('ColdMint1111111111111111111111111111111111', 40);
+  await eng.agentTick();
+  assert.strictEqual(sent.length, 0, 'a coin that is not migrated, in its final stretch or trending is ignored');
+  feed('HotMint11111111111111111111111111111111111', 80);
+  eng.accounts.get('a').nextAgentAt = 0; await eng.agentTick();
+  assert.strictEqual(sent.length, 1, JSON.stringify(sent)); assert.match(sent[0][1], /ENTERED HotMin/); assert.match(sent[0][1], /momentum|plan Rider/);
   collector._reset();
 });

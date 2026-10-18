@@ -49,6 +49,13 @@ function createDb(sb) {
       return row.user_id;
     },
     async unlinkChat(userId) { ok(await sb.from('art_users').update({ tg_chat_id: null, tg_username: null }).eq('id', userId), 'unlinkChat'); },
+    async pendingOrders() { return ok(await sb.from('art_orders').select('*').eq('status', 'pending').order('created_at').limit(10), 'pendingOrders'); },
+    async claimOrder(id) {
+      const rows = ok(await sb.from('art_orders').update({ status: 'processing' }).eq('id', id).eq('status', 'pending').select('id'), 'claimOrder');
+      return !!(rows && rows.length);
+    },
+    async finishOrder(id, patch) { ok(await sb.from('art_orders').update({ ...patch, done_at: new Date().toISOString() }).eq('id', id), 'finishOrder'); },
+    async failStaleOrders() { ok(await sb.from('art_orders').update({ status: 'failed', result: 'the robot restarted before this order ran', done_at: new Date().toISOString() }).eq('status', 'processing'), 'failStaleOrders'); },
     async pendingWithdrawals() { return ok(await sb.from('art_withdrawals').select('*').eq('status', 'pending').order('created_at').limit(20), 'pendingWithdrawals'); },
     /** Atomically claim a pending withdrawal; false if someone else already did. */
     async claimWithdrawal(id) {

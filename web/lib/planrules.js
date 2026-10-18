@@ -10,9 +10,14 @@ const MAX_PLANS = 10;
 
 /** The chart-watching agent a plan can carry. When enabled, the robot watches the live candles of young coins and
  *  enters only when the chosen pattern shows up inside the market-cap range. Everything else in the plan (size, exits) still applies. */
-const PATTERNS = ['double_bottom', 'breakout', 'dip_buy', 'volume_spike'];
+const PATTERNS = ['double_bottom', 'breakout', 'dip_buy', 'volume_spike', 'momentum'];
+/** Which coins an agent looks at: any of the three hot groups, or just one group. */
+const SOURCES = ['any', 'migrated', 'stretch', 'trending'];
 const AGENT_TFS = [5, 15, 60, 300];
-const AGENT_OFF = { enabled: false, pattern: 'double_bottom', tfSec: 15, mcapMinUsd: 0, mcapMaxUsd: null, tolerancePct: 6, minDropPct: 25, bouncePct: 8, confirmPct: 2, trigger: 'confirm', lookbackBars: 120, volMult: 4, onlyMint: null };
+const AGENT_OFF = { enabled: false, pattern: 'double_bottom', tfSec: 15, mcapMinUsd: 0, mcapMaxUsd: null, tolerancePct: 6, minDropPct: 25, bouncePct: 8, confirmPct: 2, trigger: 'confirm', lookbackBars: 120, volMult: 4, maxRisePct: 60, source: 'any', onlyMint: null };
+/** Default plan: chase coins that are rising right now among migrated, final-stretch and trending coins, and take profit fast. */
+const RIDER = { name: 'Rider', sizeUsd: 7, minAgeSec: 0, maxAgeSec: null, takeProfitPct: 20, stopLossPct: 12, maxHoldMin: 6, scanEverySec: 10, maxTradesDay: 40, minLiqUsd: 0, minVol1hUsd: 0, minBuys1h: 0, requireRising: false,
+  agent: { ...AGENT_OFF, enabled: true, pattern: 'momentum', tfSec: 15, confirmPct: 3, maxRisePct: 60, source: 'any' } };
 const HUNTER = { name: 'Bottom Hunter', sizeUsd: 7, minAgeSec: 120, maxAgeSec: 6 * 3600, takeProfitPct: 40, stopLossPct: 20, maxHoldMin: 20, scanEverySec: 10, maxTradesDay: 20, minLiqUsd: 0, minVol1hUsd: 0, minBuys1h: 0, requireRising: false,
   agent: { ...AGENT_OFF, enabled: true, mcapMinUsd: 8000, mcapMaxUsd: 100000 } };
 const num = (v, d) => { const n = Number(v); return Number.isFinite(n) ? n : d; };
@@ -37,6 +42,8 @@ function sanitizeAgent(a, base = AGENT_OFF) {
     trigger: a.trigger === 'neckline' ? 'neckline' : a.trigger === 'confirm' ? 'confirm' : base.trigger,
     lookbackBars: clamp(Math.round(num(a.lookbackBars, base.lookbackBars)), 20, 400),
     volMult: clamp(num(a.volMult, base.volMult), 1.5, 50),
+    maxRisePct: clamp(num(a.maxRisePct, base.maxRisePct), 5, 500),
+    source: SOURCES.includes(a.source) ? a.source : base.source,
     // watch ONE coin only (its contract address); null = every young coin inside the market-cap range
     onlyMint: a.onlyMint === undefined ? (base.onlyMint || null) : (typeof a.onlyMint === 'string' && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(a.onlyMint.trim()) ? a.onlyMint.trim() : null),
   };
@@ -66,6 +73,6 @@ function sanitizePlan(p = {}, base = STEADY) {
   };
 }
 
-function defaultPlans() { return [{ id: 'steady', ...STEADY }, { id: 'sniper', ...SNIPER }]; }
+function defaultPlans() { return [{ id: 'rider', ...RIDER }, { id: 'steady', ...STEADY }, { id: 'sniper', ...SNIPER }]; }
 
-module.exports = { sanitizePlan, sanitizeAgent, defaultPlans, MAX_PLANS, STEADY, SNIPER, HUNTER, AGENT_OFF, PATTERNS, AGENT_TFS };
+module.exports = { sanitizePlan, sanitizeAgent, defaultPlans, MAX_PLANS, STEADY, SNIPER, RIDER, HUNTER, SOURCES, AGENT_OFF, PATTERNS, AGENT_TFS };

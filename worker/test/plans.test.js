@@ -15,11 +15,11 @@ test('plans are sanitised: ranges clamp, bad max age is dropped, names trimmed',
   assert.strictEqual(p.name.length, 24); assert.strictEqual(p.maxAgeSec, null); assert.strictEqual(p.stopLossPct, 95);
   assert.strictEqual(p.scanEverySec, 10); assert.strictEqual(p.sizeUsd, 1); assert.strictEqual(p.minLiqUsd, 8000);
 });
-test('the active plan is the one the user switched to; unknown id falls back to the first', () => {
+test('the active plan is the one the user switched to; unknown id falls back to the first (Rider)', () => {
   const plans = defaultPlans();
   assert.strictEqual(activePlan({ plans, active_plan: 'sniper' }).name, 'Sniper');
-  assert.strictEqual(activePlan({ plans, active_plan: 'nope' }).name, 'Steady');
-  assert.strictEqual(activePlan({}).name, 'Steady');
+  assert.strictEqual(activePlan({ plans, active_plan: 'nope' }).name, 'Rider');
+  assert.strictEqual(activePlan({}).name, 'Rider');
 });
 test('safety limits still can only tighten', () => {
   const p = effectivePlan({ max_position_sol: 5, max_daily_loss_pct: 90, max_concurrent: 9 }, { maxPositionSol: 0.3, maxDailyLossPct: 15, maxConcurrent: 2 });

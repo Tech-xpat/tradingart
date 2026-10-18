@@ -114,6 +114,24 @@ create table if not exists public.art_withdrawals (
 create index if not exists art_withdrawals_status_idx on public.art_withdrawals (status, created_at);
 create unique index if not exists art_withdrawals_msg_uq on public.art_withdrawals (message);  -- replay guard: the nonce is inside the message
 
+-- Manual buys: the website stores "buy X SOL of this coin", the worker executes it inside the user's signed limits.
+create table if not exists public.art_orders (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null references public.art_users(id) on delete cascade,
+  mint        text not null,
+  size_sol    numeric not null,
+  tp_pct      numeric,
+  sl_pct      numeric,
+  hold_min    numeric,
+  status      text not null default 'pending' check (status in ('pending','processing','done','failed')),
+  result      text,
+  paper       boolean,
+  created_at  timestamptz not null default now(),
+  done_at     timestamptz
+);
+create index if not exists art_orders_status_idx on public.art_orders (status, created_at);
+create index if not exists art_orders_user_idx on public.art_orders (user_id, created_at desc);
+
 create table if not exists public.art_link_codes (
   code       text primary key,
   user_id    uuid not null references public.art_users(id) on delete cascade,
@@ -164,7 +182,7 @@ alter table public.art_worker add column if not exists checks jsonb;  -- what th
 do $$
 declare t text;
 begin
-  foreach t in array array['art_users','art_vaults','art_consents','art_settings','art_state','art_trades','art_withdrawals','art_link_codes','art_worker','art_charts']
+  foreach t in array array['art_users','art_vaults','art_consents','art_settings','art_state','art_trades','art_withdrawals','art_orders','art_link_codes','art_worker','art_charts']
   loop
     execute format('alter table public.%I enable row level security', t);
     execute format('revoke all on public.%I from anon, authenticated', t);

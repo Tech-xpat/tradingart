@@ -61,6 +61,25 @@ const has = (mint) => tokens.has(mint);
 const barsFor = (mint) => (tokens.get(mint) || {}).bars || [];
 const trackedMints = () => [...tokens.keys()];
 
+/**
+ * Hot coins by group, for the chart agents: 'migrated' (moved to a regular pool), 'stretch' (past half way up the curve),
+ * 'trending' (the busiest recent coins). 'any' is the union. Same rules as the website's lists.
+ */
+const V_STRETCH = 30 + 85 * 0.5;
+function hotMints(source = 'any', now = Date.now()) {
+  const out = new Set();
+  const wantM = source === 'any' || source === 'migrated', wantS = source === 'any' || source === 'stretch', wantT = source === 'any' || source === 'trending';
+  const busy = [];
+  for (const e of tokens.values()) {
+    if (!e.created || !e.mcapSol || now - e.lastAt > FRESH_MS) continue;
+    if (wantM && e.migrated) out.add(e.mint);
+    if (wantS && !e.migrated && (e.vSol || 0) >= V_STRETCH) out.add(e.mint);
+    if (wantT && e.trades >= 3 && now - e.lastAt < 15 * 60 * 1000) { const st = statsOf(e, now); busy.push([e.mint, st.volSol1h + 0.02 * st.buys1h]); }
+  }
+  if (wantT) busy.sort((a, b) => b[1] - a[1]).slice(0, 15).forEach(([m]) => out.add(m));
+  return [...out];
+}
+
 /** The same snapshot shape the DexScreener module returns, built from our own trades. null = we have not seen it recently. */
 function marketFor(mint, now = Date.now()) {
   const e = tokens.get(mint);
@@ -113,4 +132,4 @@ async function flush(db, limit = 40) {
 }
 
 function _reset() { tokens.clear(); pinned.clear(); }
-module.exports = { statsOf, onMessage, marketFor, barsFor, has, trackedMints, setSolUsd, pin, flush, _reset, MAX_TOKENS };
+module.exports = { statsOf, onMessage, marketFor, barsFor, has, trackedMints, hotMints, setSolUsd, pin, flush, _reset, MAX_TOKENS };

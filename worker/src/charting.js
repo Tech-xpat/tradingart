@@ -141,10 +141,31 @@ function volumeSpike(all, o = {}) {
   return { match: true, reason: `volume spike x${med > 0 ? (cur[5] / med).toFixed(1) : '∞'}`, levels: {}, idx: [all.length - 1], last: cur[4] };
 }
 
-const PATTERNS = { double_bottom: doubleBottom, breakout, dip_buy: dipBuy, volume_spike: volumeSpike };
-const PATTERN_LABELS = { double_bottom: 'Double bottom', breakout: 'Breakout', dip_buy: 'Dip buy', volume_spike: 'Volume spike' };
+/**
+ * Momentum: the coin is starting to climb, or is climbing, but is not already a runaway. Looks at the last few candles:
+ * price is up at least confirmPct over them (and not more than maxRisePct, so we do not buy the very top), the lows are
+ * getting higher, buyers clearly outnumber sellers, and the last candle is not red.
+ */
+function momentum(all, o = {}) {
+  const n = all.length, k = 4, min = o.confirmPct ?? 3, max = o.maxRisePct ?? 60;
+  if (n < 2 * k + 1) return no('not enough candles yet');
+  const recent = all.slice(-k), before = all.slice(-2 * k, -k), ref = all[n - k - 1][4], last = all[n - 1];
+  const rise = pct(last[4], ref);
+  if (rise < min) return no(`not rising yet (${rise.toFixed(1)}%)`);
+  if (rise > max) return no(`already up ${rise.toFixed(0)}%, too late`);
+  const lowNow = Math.min(...recent.map((b) => b[3])), lowThen = Math.min(...before.map((b) => b[3]));
+  if (lowNow < lowThen * 0.98) return no('lows are not rising');
+  let buys = 0, sells = 0; for (const b of recent) { buys += b[6]; sells += b[7]; }
+  if (buys + sells < 3) return no('too few trades');
+  if (buys < sells * 1.2) return no('sellers are keeping up with buyers');
+  if (last[4] < last[1] * 0.995) return no('last candle is red');
+  return { match: true, reason: `momentum: up ${rise.toFixed(1)}% with ${buys} buys to ${sells} sells`, levels: { from: ref }, idx: [n - 1], last: last[4] };
+}
+
+const PATTERNS = { double_bottom: doubleBottom, breakout, dip_buy: dipBuy, volume_spike: volumeSpike, momentum };
+const PATTERN_LABELS = { double_bottom: 'Double bottom', breakout: 'Breakout', dip_buy: 'Dip buy', volume_spike: 'Volume spike', momentum: 'Momentum (rising now)' };
 
 /** Run one pattern on bars already at the timeframe you want. */
 function detect(type, bars, opts) { const f = PATTERNS[type]; return f ? f(bars, opts || {}) : no('unknown pattern'); }
 
-module.exports = { BASE, TFS, addTrade, resample, mergeBars, pivots, detect, doubleBottom, breakout, dipBuy, volumeSpike, PATTERNS, PATTERN_LABELS };
+module.exports = { BASE, TFS, addTrade, resample, mergeBars, pivots, detect, doubleBottom, breakout, dipBuy, volumeSpike, momentum, PATTERNS, PATTERN_LABELS };

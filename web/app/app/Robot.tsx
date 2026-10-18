@@ -256,8 +256,10 @@ export default function RobotTab({ me, refresh, run, busy, say, sign, openSheet 
                     <div className="fgrid">
                       <div><span className="lbl">Pattern</span>
                         <select className="field" aria-label="Pattern" value={ag.pattern} onChange={(e) => editAgent({ pattern: e.target.value as Agent['pattern'] })}>
-                          <option value="double_bottom">Double bottom</option><option value="breakout">Breakout</option><option value="dip_buy">Dip then bounce</option><option value="volume_spike">Volume spike</option>
+                          <option value="double_bottom">Double bottom</option><option value="breakout">Breakout</option><option value="dip_buy">Dip then bounce</option><option value="volume_spike">Volume spike</option><option value="momentum">Rising now (momentum)</option>
                         </select></div>
+                      {ag.pattern === 'momentum' && !ag.onlyMint && <div><span className="lbl">Coins to watch</span><select className="field" aria-label="Coin group" value={ag.source || 'any'} onChange={(e) => editAgent({ source: e.target.value as Agent['source'] })}><option value="any">Migrated + Final stretch + Trending</option><option value="migrated">Migrated only</option><option value="stretch">Final stretch only</option><option value="trending">Trending only</option></select></div>}
+                      {ag.pattern === 'momentum' && <NumField label="Skip if already up more than" suffix="%" value={ag.maxRisePct ?? 60} aria="Maximum rise percent" onChange={(n) => editAgent({ maxRisePct: n })} />}
                       <div><span className="lbl">Candle size</span>
                         <select className="field" aria-label="Candle size" value={ag.tfSec} onChange={(e) => editAgent({ tfSec: Number(e.target.value) })}>
                           <option value={5}>5 seconds</option><option value={15}>15 seconds</option><option value={60}>1 minute</option><option value={300}>5 minutes</option>

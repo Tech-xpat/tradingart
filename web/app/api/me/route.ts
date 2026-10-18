@@ -26,6 +26,14 @@ export const GET = authed({ limit: [90, 60_000] }, async ({ session }) => {
     await sb.from('art_settings').update({ plans, active_plan: plans[0].id, updated_at: new Date().toISOString() }).eq('user_id', session.userId);
     settingsRow = { ...settingsRow, plans, active_plan: plans[0].id };
   }
+  // accounts that only ever had the two original starter plans get the new default plan, Rider, and switch to it
+  if (Array.isArray(settingsRow.plans) && settingsRow.plans.length && settingsRow.plans.every((p: any) => p && (p.id === 'steady' || p.id === 'sniper'))) {
+    const rider = defaultPlans()[0];
+    const plans = [rider, ...settingsRow.plans];
+    const active = !settingsRow.active_plan || settingsRow.active_plan === 'steady' ? rider.id : settingsRow.active_plan;
+    await sb.from('art_settings').update({ plans, active_plan: active, updated_at: new Date().toISOString() }).eq('user_id', session.userId);
+    settingsRow = { ...settingsRow, plans, active_plan: active };
+  }
   // everyone is on the leaderboard by default, so everyone needs a public handle (never the wallet)
   if (settingsRow.public_profile !== false && !settingsRow.handle) {
     const h = await ensureHandle(sb, session.userId, session.wallet);

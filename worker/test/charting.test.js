@@ -59,3 +59,16 @@ test('mergeBars lets newer data win per bucket and keeps order', () => {
   const m = c.mergeBars([[0, 1, 1, 1, 1, 1, 0, 0], [5, 1, 1, 1, 1, 1, 0, 0]], [[5, 2, 2, 2, 2, 9, 0, 0], [10, 3, 3, 3, 3, 1, 0, 0]]);
   assert.deepStrictEqual(m.map((b) => b[0]), [0, 5, 10]); assert.strictEqual(m[1][5], 9);
 });
+
+test('momentum: buys a coin that is climbing with buyers in control; refuses flat, too-late, red and seller-heavy coins', () => {
+  const up = []; // 12 flat-ish candles, then a steady climb of ~8%, all buys
+  const closes = [100, 100, 101, 100, 101, 100, 101, 100, 102, 104, 106, 108];
+  closes.forEach((p, i) => c.addTrade(up, { t: 1000 + i * 5, p, v: 1, side: 'buy' }));
+  const r = c.momentum(up, { confirmPct: 3, maxRisePct: 60 });
+  assert.ok(r.match, r.reason);
+  assert.ok(!c.momentum(mk([100, 100, 101, 100, 101, 100, 101, 100, 101, 100, 101, 100, 101]), { confirmPct: 3 }).match, 'flat');
+  assert.ok(!c.momentum(up, { confirmPct: 3, maxRisePct: 5 }).match, 'already up too much');
+  const sells = []; closes.forEach((p, i) => c.addTrade(sells, { t: 1000 + i * 5, p, v: 1, side: 'sell' }));
+  assert.ok(!c.momentum(sells, { confirmPct: 3 }).match, 'sellers');
+  assert.ok(!c.momentum(up.slice(0, 5), {}).match, 'too few candles');
+});

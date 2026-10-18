@@ -118,6 +118,7 @@ async def main():
             await pg.wait_for_selector("text=Paste a full Solana token address")
             await pg.get_by_label("Contract address").fill(MINT); await pg.get_by_role("button", name="Search").click()
             await pg.wait_for_selector("text=Search Coin"); await pg.wait_for_selector("canvas[aria-label='Price chart']"); assert await pg.locator("iframe").count() == 0 and await pg.locator("a[href*='dexscreener']").count() == 0, "no third-party chart or promo links"; await pg.wait_for_selector(".hrow.buy"); assert await pg.locator(".hrow.sell").count() >= 1, "history shows buys and sells"
+            await pg.get_by_role("button", name="Buy now").click(); await pg.wait_for_selector("text=Connect your wallet and sign in first"); await pg.locator(".watchbox").get_by_role("button", name="Close").click()
             await pg.get_by_role("button", name="Watch with my robot").click(); await pg.wait_for_selector("text=Connect your wallet and sign in first"); await pg.get_by_role("button", name="Close", exact=True).first.click() if False else None
             await pg.get_by_role("tab", name="1m").click(); await pg.get_by_role("tab", name="1D").click(); await pg.get_by_role("tab", name="15s").click()
             cvb = await pg.locator("canvas[aria-label='Price chart']").bounding_box()
@@ -143,6 +144,7 @@ async def main():
             await pg.get_by_role("button", name="Sign with my wallet").click(); await pg.wait_for_selector("text=Consent signed and saved", timeout=8000)
             # plans: starter plans, edit size + age window, new plan, switch
             await pg.get_by_role("radio", name="Steady").wait_for(); await pg.get_by_role("radio", name="Sniper").wait_for()
+            await pg.get_by_role("radio", name="Rider").wait_for(); await pg.get_by_role("radio", name="Steady").click(); await pg.wait_for_timeout(900)
             await pg.get_by_label("Trade size in dollars").fill("12")
             await pg.get_by_label("Maximum coin age value").fill("2"); await pg.get_by_label("Maximum coin age unit").select_option("h")
             await pg.get_by_label("Minimum coin age value").fill("45"); await pg.get_by_label("Minimum coin age unit").select_option("s")

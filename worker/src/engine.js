@@ -30,7 +30,8 @@ class Engine {
       const { db } = this;
       const running = await db.settingsRunning();
       const withOpen = await db.usersWithOpenPositions();
-      const ids = new Set([...running.map((r) => r.user_id), ...withOpen]);
+      const waiting = db.pendingOrders ? (await db.pendingOrders().catch(() => [])).map((o) => o.user_id) : [];
+      const ids = new Set([...running.map((r) => r.user_id), ...withOpen, ...waiting]);
       for (const [id, a] of this.accounts) if (a.hasOpen()) ids.add(id);
       const list = [...ids];
       const [rows, users, vaults, consents] = await Promise.all([db.settingsFor(list), db.users(list), db.vaults(list), db.consents(list)]);
@@ -98,7 +99,7 @@ class Engine {
         for (const [m, t] of seen) if (Date.now() - t > 30 * 60 * 1000) seen.delete(m);
         const held = new Set(a.positions().map((p) => p.mint));
         let checked = 0, found = null;
-        const pool = ag.onlyMint ? [ag.onlyMint] : collector.trackedMints(); // a watcher plan looks at one coin; otherwise every young coin
+        const pool = ag.onlyMint ? [ag.onlyMint] : (ag.source && ag.source !== 'none' && (ag.pattern === 'momentum' || ag.source !== 'any') ? collector.hotMints(ag.source) : collector.trackedMints()); // a watcher plan looks at one coin; otherwise every young coin
         for (const mint of pool) {
           if (held.has(mint) || seen.has(mint)) continue;
           const mk = collector.marketFor(mint);
@@ -146,6 +147,30 @@ class Engine {
     return kp;
   }
 
+  /** Manual buys from the website's coin chart. */
+  async orderTick() {
+    if (this.ordering || !this.db.pendingOrders) return;
+    this.ordering = true;
+    try {
+      const orders = await this.db.pendingOrders();
+      if (!orders.length) return;
+      if (orders.some((o) => !this.accounts.has(o.user_id))) { this.ordering = false; await this.sync(); this.ordering = true; }
+      for (const o of orders) {
+        if (!(await this.db.claimOrder(o.id))) continue;
+        const a = this.accounts.get(o.user_id);
+        if (!a) { await this.db.finishOrder(o.id, { status: 'failed', result: 'your account is not ready (create your vault and sign your limits, or check the settings)' }); continue; }
+        let res;
+        try { res = await a.manualBuy(o.mint, { sizeSol: Number(o.size_sol), tp: Number(o.tp_pct) || 0, sl: Number(o.sl_pct) || 0, holdMin: Number(o.hold_min) || 0 }); }
+        catch (err) { res = { ok: false, why: err.message }; }
+        if (res.ok) {
+          const p = res.pos;
+          await this.db.finishOrder(o.id, { status: 'done', paper: !!res.paper, result: `bought ${p.sizeSol.toFixed(4)} SOL ${res.paper ? '(paper)' : '(live)'}. Exits: +${p.takeProfitPct}% / -${p.stopLossPct}% / ${p.maxHoldMin} min${p.buySig ? ` · ${p.buySig}` : ''}` });
+          a.notify(`🟢 MANUAL BUY ${o.mint.slice(0, 6)}…${o.mint.slice(-4)} · ${res.paper ? 'PAPER' : 'LIVE'} · ${p.sizeSol.toFixed(4)} SOL`);
+        } else await this.db.finishOrder(o.id, { status: 'failed', paper: !!res.paper, result: String(res.why || 'failed').slice(0, 300) });
+      }
+    } catch (err) { logger.error('orderTick:', err.message); } finally { this.ordering = false; }
+  }
+
   async withdrawTick() {
     if (this.withdrawing) return;
     this.withdrawing = true;
@@ -191,6 +216,8 @@ class Engine {
     this.timers.push(setInterval(() => this.agentTick(), 3000));
     this.timers.push(setInterval(() => this.monitorTick(), config.PRICE_POLL_MS));
     this.timers.push(setInterval(() => this.withdrawTick(), config.WITHDRAW_POLL_MS));
+    if (this.db.failStaleOrders) this.db.failStaleOrders().catch(() => {});
+    this.timers.push(setInterval(() => this.orderTick(), 2000));
     logger.info(`engine started: ${this.accounts.size} active account(s), live trading ${config.LIVE_TRADING_ENABLED ? 'ENABLED' : 'disabled (everyone is paper)'}`);
   }
 

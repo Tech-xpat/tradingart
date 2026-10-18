@@ -210,12 +210,12 @@ test('withdraw to another address the owner chose, and trade-size rules', async 
   // plans: starter plans are seeded, edits are sanitised, switching works, no maximum size
   const patch = (body: object) => b.call('/api/settings', { method: 'PATCH', body });
   const me0 = (await b.call('/api/me')).json.settings;
-  assert.deepStrictEqual(me0.plans.map((p: any) => p.id), ['steady', 'sniper']); assert.strictEqual(me0.active_plan, 'steady'); assert.strictEqual(me0.plans[0].sizeUsd, 7);
+  assert.deepStrictEqual(me0.plans.map((p: any) => p.id), ['rider', 'steady', 'sniper']); assert.strictEqual(me0.active_plan, 'rider'); assert.strictEqual(me0.plans[0].sizeUsd, 7); assert.strictEqual(me0.plans[0].agent.pattern, 'momentum');
   const mine = { name: 'Whale', sizeUsd: 50000, minAgeSec: 45, maxAgeSec: 900, takeProfitPct: 80, stopLossPct: 500, scanEverySec: 2, requireRising: false };
   assert.strictEqual((await patch({ plans: [...me0.plans, mine], activePlan: 'nope' })).status, 200);
   const me1 = (await b.call('/api/me')).json.settings;
-  assert.strictEqual(me1.plans.length, 3); assert.strictEqual(me1.active_plan, 'steady', 'unknown active id falls back');
-  const w3 = me1.plans[2]; assert.strictEqual(w3.sizeUsd, 50000, 'no maximum'); assert.strictEqual(w3.stopLossPct, 95); assert.strictEqual(w3.scanEverySec, 10);
+  assert.strictEqual(me1.plans.length, 4); assert.strictEqual(me1.active_plan, 'rider', 'unknown active id falls back');
+  const w3 = me1.plans[3]; assert.strictEqual(w3.sizeUsd, 50000, 'no maximum'); assert.strictEqual(w3.stopLossPct, 95); assert.strictEqual(w3.scanEverySec, 10);
   assert.strictEqual(w3.minAgeSec, 45); assert.strictEqual(w3.maxAgeSec, 900); assert.ok(w3.id);
   assert.strictEqual((await patch({ activePlan: w3.id })).status, 200);
   assert.strictEqual((await b.call('/api/me')).json.settings.active_plan, w3.id);
@@ -255,13 +255,13 @@ test('leaderboard: everyone listed by default, ranked profit, profile, copy plan
   assert.strictEqual((await B.call('/api/copy', { method: 'POST', body: { handle: 'nobody' } })).status, 404);
   assert.strictEqual((await B.call('/api/copy', { method: 'POST', body: { handle: 'alpha' } })).status, 200);
   let b1 = (await B.call('/api/me')).json.settings;
-  assert.strictEqual(b1.plans.length, 3); assert.strictEqual(b1.active_plan, 'steady'); assert.strictEqual(b1.follow_user_id, null);
+  assert.strictEqual(b1.plans.length, 4); assert.strictEqual(b1.active_plan, 'rider'); assert.strictEqual(b1.follow_user_id, null);
   const cp = b1.plans.find((p: any) => p.id.startsWith('cp-')); assert.strictEqual(cp.name, '@alpha'); assert.strictEqual(cp.sizeUsd, 7);
   assert.strictEqual(b1.max_position_sol, meB.settings.max_position_sol, 'safety limits untouched');
   // auto-copy: switched on, then follows the leader's plan changes
   assert.strictEqual((await B.call('/api/copy', { method: 'POST', body: { handle: 'alpha', auto: true } })).status, 200);
   b1 = (await B.call('/api/me')).json.settings; assert.strictEqual(b1.active_plan, cp.id); assert.ok(b1.follow_user_id);
-  assert.strictEqual(b1.plans.length, 3, 're-copy replaces, not piles up');
+  assert.strictEqual(b1.plans.length, 4, 're-copy replaces, not piles up');
   assert.strictEqual((await B.call('/api/profile?handle=alpha')).json.following, true);
   const sniperA = meA.settings.plans.find((p: any) => p.id === 'sniper');
   assert.strictEqual((await patchA({ activePlan: 'sniper' })).status, 200);
@@ -306,6 +306,21 @@ test('any coin gets a chart and a full trade history from the public chain, with
   const bfr = await A.call(`/api/backfill?mint=${CHAIN_MINT}`, { method: 'POST' }); const bf = bfr.json; assert.ok(bf.ok && bf.count >= 20, JSON.stringify(bf));
   const row = pg.tables.art_charts.find((r) => r.mint === CHAIN_MINT)!; assert.ok(row.bars.length >= 5 && row.trades.length >= 20 && row.bars_5m.length >= 1);
   const ch = (await A.call(`/api/chart?mint=${CHAIN_MINT}`)).json.chart; assert.ok(ch.bars.length >= 5 && ch.trades.length >= 20);
+});
+
+test('manual buy: needs sign-in, validates, records one order at a time, and the owner can read its result', async () => {
+  const anon = new Browser();
+  assert.strictEqual((await anon.call('/api/order', { method: 'POST', body: { mint: CHAIN_MINT, sizeSol: 0.02 } })).status, 401);
+  const user = mkWallet(); const b = new Browser(); assert.strictEqual((await b.signIn(user)).status, 200);
+  assert.strictEqual((await b.call('/api/order', { method: 'POST', body: { mint: 'bad', sizeSol: 0.02 } })).status, 400);
+  assert.strictEqual((await b.call('/api/order', { method: 'POST', body: { mint: CHAIN_MINT, sizeSol: 0 } })).status, 400);
+  assert.strictEqual((await b.call('/api/order', { method: 'POST', body: { mint: CHAIN_MINT, sizeSol: 0.02, slPct: 150 } })).status, 400);
+  const r = await b.call('/api/order', { method: 'POST', body: { mint: CHAIN_MINT, sizeSol: 0.02, tpPct: 20, slPct: 10, holdMin: 5 } });
+  assert.strictEqual(r.status, 200, JSON.stringify(r.json)); const id = r.json.id; assert.ok(id);
+  assert.strictEqual((await b.call('/api/order', { method: 'POST', body: { mint: CHAIN_MINT, sizeSol: 0.02 } })).status, 409, 'one at a time');
+  assert.strictEqual((await b.call(`/api/order?id=${id}`)).json.status, 'pending');
+  const other = new Browser(); await other.signIn(mkWallet());
+  assert.strictEqual((await other.call(`/api/order?id=${id}`)).status, 404, 'only the owner can see it');
 });
 
 test('panic pauses the robot and stamps panic_at for the worker', async () => {

@@ -70,12 +70,12 @@ class Book {
     return this.daily.realizedSol <= -(this.daily.startSol * this.acct.plan.maxDailyLossPct) / 100;
   }
 
-  async sizeSol() {
+  async sizeSol(overrideSol) {
     const plan = this.acct.plan;
     const bal = await this.currentBalanceSol();
     const usable = Math.max(0, bal - config.SOL_FEE_RESERVE);
     const solUsd = await this.d.scanner.fetchSolPriceUsd();
-    let sol = (Number(plan.sizeUsd) || 7) / solUsd;
+    let sol = overrideSol > 0 ? overrideSol : (Number(plan.sizeUsd) || 7) / solUsd;
     sol = Math.min(sol, Number(plan.maxPositionSol) || 0.05);
     sol = Math.min(sol, usable * 0.95);
     if (sol < config.MIN_POSITION_SOL) sol = 0;
@@ -130,13 +130,13 @@ class Book {
     return { tokenRaw: BigInt(Math.floor(tokensUi * 10 ** decimals)), decimals, costLamports: BigInt(Math.round(sol * 1e9)), signature: null, source: 'paper' };
   }
 
-  async tryEnter(mint, reason) {
+  async tryEnter(mint, reason, opts = {}) {
     const plan = this.acct.plan;
     if (this.open.has(mint) || this.entering) return { ok: false, why: 'busy' };
     if (this.open.size >= plan.maxConcurrent) return { ok: false, why: 'max concurrent' };
     await this.load();
     await this.rollDay();
-    if (this.daily.tradesToday >= plan.maxTradesDay) return { ok: false, why: `max trades/day reached (${this.daily.tradesToday}/${plan.maxTradesDay})` };
+    if (!opts.manual && this.daily.tradesToday >= plan.maxTradesDay) return { ok: false, why: `max trades/day reached (${this.daily.tradesToday}/${plan.maxTradesDay})` };
     this.entering = true;
     try {
       if (await this.isHalted()) return { ok: false, why: 'daily loss limit reached' };
@@ -153,8 +153,8 @@ class Book {
         const bal = await this.currentBalanceSol();
         if (bal < config.MIN_VAULT_SOL) return { ok: false, why: `vault balance ${bal.toFixed(4)} SOL below the ${config.MIN_VAULT_SOL} SOL minimum` };
       }
-      const sol = await this.sizeSol();
-      if (sol < config.MIN_POSITION_SOL) return { ok: false, why: `size ${sol} SOL below minimum` };
+      const sol = await this.sizeSol(opts.sizeSol);
+      if (sol < config.MIN_POSITION_SOL) return { ok: false, why: opts.sizeSol ? `that size is not possible: the minimum is ${config.MIN_POSITION_SOL} SOL, your limit is ${plan.maxPositionSol} SOL per trade and the ${this.paper ? 'paper' : 'vault'} balance must cover it plus ${config.SOL_FEE_RESERVE} SOL for fees` : `size ${sol} SOL below minimum` };
       logger.info(`[${this.acct.tag}] ENTER ${short(mint)} ${sol} SOL (${reason}) ${this.paper ? '[PAPER]' : '[LIVE]'}`);
       const fill = this.paper ? this.paperBuy(mint, sol, mkt) : await this.liveBuy(mint, sol);
       const costSol = toSol(fill.costLamports);
@@ -166,7 +166,7 @@ class Book {
         sizeSol: costSol, sizeUsd: plan.sizeUsd, entryPriceNative: costSol / tokensUi, fillSource: fill.source, buySig: fill.signature,
         reason, mode: plan.riskProfile, ageDays: mkt.ageDays ?? null, ageSec: mkt.ageSec ?? null, liquidityUsd: mkt.liquidityUsd ?? null, volume1h: mkt.volume1h ?? null,
         priceChange1h: mkt.priceChange1h ?? null, priceChange6h: mkt.priceChange6h ?? null, buys1h: mkt.buys1h ?? null, score: m ? Number(m[1]) : null,
-        takeProfitPct: plan.takeProfitPct, stopLossPct: plan.stopLossPct, maxHoldMin: plan.maxHoldMin,
+        takeProfitPct: opts.tp > 0 ? opts.tp : plan.takeProfitPct, stopLossPct: opts.sl > 0 ? opts.sl : plan.stopLossPct, maxHoldMin: opts.holdMin > 0 ? opts.holdMin : plan.maxHoldMin,
         lastPnl: null, lastPrice: null, priceMisses: 0, stuckRounds: 0,
       };
       this.open.set(mint, pos);
@@ -401,6 +401,14 @@ class Account {
     if (this.paused) return { ok: false, why: 'paused' };
     await this.load();
     return this.entryBook().tryEnter(mint, reason);
+  }
+
+  /** A buy the user asked for by hand. Not blocked by "paused" or the daily trade count; the signed safety limits still apply. */
+  async manualBuy(mint, o = {}) {
+    await this.load();
+    const book = this.entryBook();
+    const res = await book.tryEnter(mint, 'manual', { manual: true, sizeSol: o.sizeSol, tp: o.tp, sl: o.sl, holdMin: o.holdMin });
+    return { ...res, paper: book.paper };
   }
 
   async monitorTick() { await Promise.all([this.books.paper.monitorTick(), this.books.live.monitorTick()]); }

@@ -51,3 +51,20 @@ test('coarser candle tiers are kept for the zoomed-out chart views', () => {
     assert.strictEqual(rows[0].bars_1m.length, 0, 'tiny coins do not store tiers'); collector._reset();
   });
 });
+
+test('hot coins: migrated, final-stretch and trending groups for the Rider plan', () => {
+  collector._reset();
+  const mk = (id, vSol, extra = []) => {
+    const m = id.padEnd(40, 'x');
+    stream._feed({ txType: 'create', mint: m, name: id, symbol: id, uri: 'ipfs://x', marketCapSol: 30, vSolInBondingCurve: vSol, solAmount: 1 });
+    for (let i = 0; i < 4; i++) stream._feed({ txType: 'buy', mint: m, marketCapSol: 31 + i, vSolInBondingCurve: vSol, solAmount: 2 });
+    extra.forEach((x) => stream._feed({ ...x, mint: m }));
+    return m;
+  };
+  const quiet = mk('Quiet', 35), late = mk('Late', 80), mig = mk('Mig', 40, [{ txType: 'migrate' }]);
+  const any = collector.hotMints('any');
+  assert.ok(any.includes(late) && any.includes(mig));
+  assert.deepStrictEqual(collector.hotMints('stretch'), [late]);
+  assert.deepStrictEqual(collector.hotMints('migrated'), [mig]);
+  assert.ok(collector.hotMints('trending').includes(quiet), 'busy coins count as trending');
+});
