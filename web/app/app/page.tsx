@@ -65,15 +65,33 @@ export default function Dashboard() {
   const [wAmt, setWAmt] = useState('');
   const [wTo, setWTo] = useState('');
   const [wPreview, setWPreview] = useState<{ message: string } | null>(null);
+  const [walletBal, setWalletBal] = useState<number | null>(null);
+  const [fundNote, setFundNote] = useState<{ kind: 'wait' | 'ok' | 'err'; text: string } | null>(null);
+  useEffect(() => {
+    if (sheet !== 'fund' || !publicKey) return;
+    let dead = false;
+    connection.getBalance(publicKey, 'confirmed').then((l) => { if (!dead) setWalletBal(l / 1e9); }).catch(() => { if (!dead) setWalletBal(null); });
+    return () => { dead = true; };
+  }, [sheet, publicKey, connection]);
   const fund = () => run('fund', async () => {
     if (!publicKey || !me?.vault) throw new Error('No vault');
     const amount = Number(fundAmt);
     if (!(amount > 0)) throw new Error('Enter an amount in SOL');
+    if (walletBal != null && amount > walletBal - 0.001) throw new Error(`Your connected wallet holds ${walletBal.toFixed(4)} SOL. Enter ${Math.max(0, walletBal - 0.003).toFixed(3)} or less, which leaves a little for the network fee.`);
+    const before = me.vault.balanceSol ?? 0;
     const tx = new Transaction().add(SystemProgram.transfer({ fromPubkey: publicKey, toPubkey: new PublicKey(me.vault.address), lamports: Math.round(amount * 1e9) }));
     const sig = await sendTransaction(tx, connection);
-    setSheet(null);
-    say('ok', `Sent. It shows in the vault after confirmation (${sig.slice(0, 8)}…).`);
-    setTimeout(refresh, 6000); setTimeout(refresh, 15000);
+    setFundNote({ kind: 'wait', text: `Sent (${sig.slice(0, 8)}…). Waiting for the network to confirm it…` });
+    // watch the vault in the background until the money shows up (usually 5 to 30 seconds); the buttons stay usable meanwhile
+    void (async () => {
+      for (let i = 0; i < 25; i++) {
+        await new Promise((r) => setTimeout(r, 4000));
+        const m = await refresh();
+        const now = m?.vault?.balanceSol ?? 0;
+        if (now >= before + amount * 0.9) { setFundNote({ kind: 'ok', text: `✅ Received. Your vault now holds ${now.toFixed(4)} SOL.` }); return; }
+      }
+      setFundNote({ kind: 'err', text: `Sent, but not visible in the vault yet. Check the transaction: https://solscan.io/tx/${sig}` });
+    })();
   });
   const reviewWithdraw = () => run('wreview', async () => {
     if (!me) return;
@@ -158,13 +176,27 @@ export default function Dashboard() {
       </div>
 
       {sheet === 'fund' && me?.vault && (
-        <Sheet title="Deposit to your vault" onClose={closeSheet.current}>
-          <p>Your wallet asks you to approve one transfer to your vault. After that, the robot trades with the vault balance and never asks you to approve a trade. You can also copy the vault address and send from any exchange. Leave a little for network fees. You can take it all back whenever you like.</p>
-          <div className="addr"><span style={{ flex: 1 }}>{me.vault.address}</span><button className="btn btn-ghost sm" onClick={() => navigator.clipboard?.writeText(me.vault!.address)}>Copy</button></div>
+        <Sheet title="Deposit to your vault" onClose={() => { setFundNote(null); closeSheet.current(); }}>
+          <p>Pick an amount and approve one transfer in your wallet. After that the robot trades with the vault balance and never asks you to approve a trade. Leave a little SOL for network fees.</p>
+          <div className="depstats">
+            <div><span>Your wallet</span><b>{walletBal == null ? '…' : `${walletBal.toFixed(4)} SOL`}</b></div>
+            <div><span>Vault now</span><b>{(me.vault.balanceSol ?? 0).toFixed(4)} SOL</b></div>
+          </div>
           <span className="lbl">Amount in SOL</span>
+          <div className="row" style={{ flexWrap: 'wrap', gap: 6, margin: '4px 0 8px' }}>
+            {['0.05', '0.1', '0.25', '0.5', '1'].map((v) => <button key={v} className={`btn sm ${fundAmt === v ? 'btn-gold' : ''}`} onClick={() => setFundAmt(v)}>{v}</button>)}
+            {walletBal != null && walletBal > 0.01 && <button className="btn sm" onClick={() => setFundAmt(String(Math.max(0, Math.floor((walletBal - 0.005) * 1000) / 1000)))}>Max</button>}
+          </div>
           <div className="row">
             <input className="field" style={{ maxWidth: 180 }} inputMode="decimal" value={fundAmt} onChange={(e) => setFundAmt(e.target.value)} aria-label="Amount in SOL" />
             <button className="btn btn-gold" disabled={!!busy} onClick={fund}>{busy === 'fund' ? 'Check your wallet…' : 'Deposit from my wallet'}</button>
+          </div>
+          {fundNote && <div className={`note ${fundNote.kind === 'ok' ? 'ok' : fundNote.kind === 'err' ? 'err' : ''}`} role="status">{fundNote.text}</div>}
+          <p className="hint" style={{ marginTop: 14 }}>Other ways: send SOL to this address from an exchange or another wallet (it appears here within seconds), or open your wallet app with the amount filled in.</p>
+          <div className="addr"><span style={{ flex: 1 }}>{me.vault.address}</span><button className="btn btn-ghost sm" onClick={() => navigator.clipboard?.writeText(me.vault!.address)}>Copy</button></div>
+          <div className="row" style={{ gap: 8, marginTop: 8 }}>
+            <a className="btn btn-ghost sm" href={`solana:${me.vault.address}?amount=${Number(fundAmt) > 0 ? Number(fundAmt) : ''}&label=ART%20vault`}>Open in my wallet app</a>
+            <a className="btn btn-ghost sm" href={`https://solscan.io/account/${me.vault.address}`} target="_blank" rel="noreferrer">See vault on Solscan</a>
           </div>
         </Sheet>
       )}
@@ -181,6 +213,7 @@ export default function Dashboard() {
               <span className="lbl" style={{ marginTop: 10 }}>Amount</span>
               <div className="row"><input className="field" style={{ maxWidth: 220 }} placeholder="Amount in SOL, blank = all" inputMode="decimal" value={wAmt} onChange={(e) => setWAmt(e.target.value)} />
                 <button className="btn btn-ghost" disabled={!!busy} onClick={reviewWithdraw}>Review withdrawal</button></div>
+              <p className="hint">Leave the amount blank to withdraw everything. Open live trades must be closed first (Robot tab, “Stop and sell all”).</p>
             </>
           ) : (
             <>
@@ -192,6 +225,16 @@ export default function Dashboard() {
               </div>
             </>
           )}
+          {(() => {
+            const last = me.withdrawals[0];
+            if (!last || !['pending', 'processing'].includes(last.status)) return null;
+            const age = (Date.now() - Date.parse(last.created_at)) / 1000;
+            const ver = String(me.worker?.version || '0.0').split('.').map(Number);
+            if (!me.worker?.online) return <p className="hint warn">Your last withdrawal is waiting because the robot service is offline. Nothing is lost: it will go through when the service is back.</p>;
+            if (ver[0] < 4 || (ver[0] === 4 && ver[1] < 2)) return <p className="hint warn">The robot service is running an old version ({me.worker.version}). Redeploy it on Railway so withdrawals are processed.</p>;
+            if (age > 90) return <p className="hint warn">Still processing after {Math.round(age)} seconds. The network can be slow; the robot keeps retrying the same transfer and never sends it twice.</p>;
+            return <p className="hint">Processing your withdrawal. This usually takes under a minute.</p>;
+          })()}
           {me.withdrawals.slice(0, 6).map((w) => (
             <div className="feed" key={w.id}>
               <div><b>{w.amount_lamports ? `${(Number(w.amount_lamports) / 1e9).toFixed(4)} SOL` : 'All'}</b><span>{new Date(w.created_at).toLocaleString()}{w.error ? ` · ${w.error}` : ''}{w.tx_sig ? <> · <a href={`https://solscan.io/tx/${w.tx_sig}`} target="_blank" rel="noreferrer">view</a></> : null}</span></div>

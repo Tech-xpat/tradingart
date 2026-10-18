@@ -164,9 +164,10 @@ async def main():
             await pg.get_by_role("button", name="Deposit", exact=True).click()
             await pg.get_by_role("button", name="Deposit from my wallet").click()
             try:
-                await pg.wait_for_selector("text=Sent. It shows", timeout=8000)
+                await pg.wait_for_selector("text=Waiting for the network to confirm", timeout=8000)
             except Exception:
                 print("FUND FAILED:", await pg.locator(".note").all_inner_texts(), [e[:200] for e in errs[:5]]); raise
+            await pg.keyboard.press("Escape"); await pg.wait_for_timeout(300)
             await pg.get_by_role("button", name="Withdraw", exact=True).click()
             await pg.get_by_placeholder("Amount in SOL, blank = all").fill("0.1")
             await pg.get_by_role("button", name="Review withdrawal").click(); await pg.wait_for_selector("text=Your wallet will ask you to sign this")

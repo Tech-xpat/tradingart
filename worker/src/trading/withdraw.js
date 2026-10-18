@@ -3,12 +3,14 @@
  * the only component that can move vault funds. The destination is inside the message the owner signed, so
  * nothing (not the web app, not the database) can change it afterwards.
  */
-const { VersionedTransaction, TransactionMessage, SystemProgram, PublicKey } = require('@solana/web3.js');
+const { VersionedTransaction, TransactionMessage, SystemProgram, PublicKey, ComputeBudgetProgram } = require('@solana/web3.js');
 const { parseWithdraw } = require('../vault/messages');
 const { verifyProof } = require('../vault/verify');
 const { rpc } = require('../solana/rpc');
 
-const FEE_LAMPORTS = 5000n;
+// base fee 5000 + an exact priority fee (1000 compute units x 2,000,000 micro-lamports = 2000), so the total is known to the lamport
+const PRIORITY_LIMIT = 1000, PRIORITY_PRICE = 2_000_000;
+const FEE_LAMPORTS = 7000n;
 const RENT_MIN = 890880n; // a system account may hold 0 or at least this much; anything in between is refused by the network
 const MAX_AGE_MS = 20 * 60 * 1000;
 
@@ -39,10 +41,19 @@ async function sendSol(signer, toAddress, lamports, deps) {
   const { blockhash } = await rpc((c) => c.getLatestBlockhash('confirmed'));
   const msg = new TransactionMessage({
     payerKey: signer.publicKey, recentBlockhash: blockhash,
-    instructions: [SystemProgram.transfer({ fromPubkey: signer.publicKey, toPubkey: new PublicKey(toAddress), lamports })],
+    instructions: [ComputeBudgetProgram.setComputeUnitLimit({ units: PRIORITY_LIMIT }), ComputeBudgetProgram.setComputeUnitPrice({ microLamports: PRIORITY_PRICE }), SystemProgram.transfer({ fromPubkey: signer.publicKey, toPubkey: new PublicKey(toAddress), lamports })],
   }).compileToV0Message();
   const tx = new VersionedTransaction(msg);
-  return deps.swap.landTx(tx, signer, 30000);
+  try { return await deps.swap.landTx(tx, signer, 45000); }
+  catch (e) {
+    // Sent but not confirmed yet: the SAME signed transaction may still land, so wait until it has certainly expired. Never send a second one.
+    if (e && e.timedOut && e.signature && deps.swap.waitForSignature) {
+      const v = await deps.swap.waitForSignature(e.signature, 75000);
+      if (v.ok) return e.signature;
+      throw new Error('the network dropped the transfer and nothing was sent. Your funds are still in the vault: press Withdraw again');
+    }
+    throw e;
+  }
 }
 
 /** Run one claimed withdrawal. Never throws: always writes a final status. */

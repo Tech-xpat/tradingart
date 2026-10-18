@@ -72,7 +72,7 @@ test('a withdrawal that would strand a dust balance is refused with a clear reas
   const t = mk({ amount: '0.5 SOL' });
   let finished = null, sent = false;
   const db = { users: async () => new Map([['u', { wallet: t.owner.address }]]), vaults: async () => new Map([['u', { address: t.v.address }]]), finishWithdrawal: async (id, p) => { finished = p; } };
-  const deps = { chain: { getSolLamports: async () => 500_000_000n + 5000n + 100_000n }, swap: { landTx: async () => { sent = true; return 'sig'; } } };
+  const deps = { chain: { getSolLamports: async () => 500_000_000n + 7000n + 100_000n }, swap: { landTx: async () => { sent = true; return 'sig'; } } };
   await processWithdrawal({ ...t.req, id: 'w1', user_id: 'u' }, { db, deps, getSigner: async () => { throw new Error('should not sign'); }, hasOpenPositions: async () => false });
   assert.strictEqual(finished.status, 'rejected'); assert.match(finished.error, /0\.00089/); assert.strictEqual(sent, false);
 });

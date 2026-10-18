@@ -4,7 +4,8 @@ import { json, fail, rateLimited, ipOf } from '@/lib/api';
 import { db } from '@/lib/db';
 import { env } from '@/lib/env';
 import { isMint } from '@/lib/dex';
-import { assess, type SafetyInput } from '@/lib/safety';
+import { assess, parseCreator, type SafetyInput, type DevInfo } from '@/lib/safety';
+import { curveOf } from '@/lib/pumpchain';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -37,6 +38,15 @@ export async function GET(req: NextRequest) {
     const row: any = r.data; if (row) { inp.text = [row.description, row.name].filter(Boolean).join(' '); dev = row.dev || null; }
   } catch { /* charts table optional here */ }
 
+  let devSource: 'launch' | 'chain' = 'launch';
+  if (!dev) {
+    // a coin we did not see launch: the pump.fun curve account records who created it
+    try {
+      const a = await rpc('getAccountInfo', [curveOf(mint), { encoding: 'base64', commitment: 'confirmed' }]);
+      const b64 = a?.value?.data?.[0];
+      if (b64) { const c = parseCreator(new Uint8Array(Buffer.from(b64, 'base64')), (b) => new PublicKey(b).toBase58()); if (c) { dev = c; devSource = 'chain'; } }
+    } catch { /* dev stays unknown */ }
+  }
   let supply = 0, decimals = 6;
   try {
     const info = await rpc('getAccountInfo', [mint, { encoding: 'jsonParsed', commitment: 'confirmed' }]);
@@ -64,7 +74,13 @@ export async function GET(req: NextRequest) {
       } catch { /* stays unknown */ }
     }
   }
-  const body = { mint, flags: assess(inp), supplyDecimals: decimals, checkedAt: Date.now() };
+  let devInfo: DevInfo | null = null;
+  if (dev) {
+    let sol: number | null = null;
+    try { const b = await rpc('getBalance', [dev, { commitment: 'confirmed' }]); sol = Number(b?.value) / 1e9; } catch { /* unknown */ }
+    devInfo = { address: dev, pct: inp.devPct, sol, source: devSource };
+  }
+  const body = { mint, flags: assess(inp), dev: devInfo, supplyDecimals: decimals, checkedAt: Date.now() };
   cache.set(mint, { at: Date.now(), body }); if (cache.size > 600) cache.delete(cache.keys().next().value as string);
   return json(body);
 }

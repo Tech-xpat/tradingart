@@ -176,7 +176,7 @@ test('full journey: vault, signed limits, rules on changes, live gating, withdra
   const done = pg.tables.art_withdrawals.find((r) => r.id === req.id)!;
   assert.strictEqual(done.status, 'done', done.error); assert.strictEqual(done.tx_sig, 'FAKESIG');
   assert.strictEqual(sent.length, 1);
-  const ix = sent[0].message.compiledInstructions[0]; const keys = sent[0].message.staticAccountKeys.map((k: PublicKey) => k.toBase58());
+  const ix = sent[0].message.compiledInstructions[sent[0].message.compiledInstructions.length - 1]; const keys = sent[0].message.staticAccountKeys.map((k: PublicKey) => k.toBase58());
   assert.strictEqual(keys[0], v1.address, 'paid from the vault'); assert.strictEqual(keys[ix.accountKeyIndexes[1]], user.address, 'paid to the connected wallet');
   assert.strictEqual(Buffer.from(ix.data).readBigUInt64LE(4), 100_000_000n, '0.1 SOL');
 });
@@ -330,6 +330,15 @@ test('safety icons: bad address refused; an unreadable coin comes back as unknow
   assert.deepStrictEqual(r.json.flags.map((f: any) => f.key), ['mint', 'freeze', 'holders', 'dev', 'phish']);
   assert.ok(r.json.flags.every((f: any) => ['ok', 'warn', 'bad', 'unknown'].includes(f.level)));
   assert.ok(r.json.flags.filter((f: any) => f.key !== 'phish').every((f: any) => f.level === 'unknown' || f.level !== 'ok' || f.key !== 'dev'), 'no invented green for the developer check');
+});
+
+test('browser network proxy: only wallet calls are allowed, and they reach the node', async () => {
+  const A = new Browser();
+  const bad = await A.call('/api/rpc', { method: 'POST', body: { jsonrpc: '2.0', id: 1, method: 'getProgramAccounts', params: [] } });
+  assert.strictEqual(bad.status, 403);
+  const ok = await A.call('/api/rpc', { method: 'POST', body: { jsonrpc: '2.0', id: 7, method: 'getLatestBlockhash', params: [] } });
+  assert.strictEqual(ok.status, 200); assert.ok(ok.json.result || ok.json.error, JSON.stringify(ok.json));
+  assert.strictEqual((await A.call('/api/rpc', { method: 'POST', body: [] })).status, 403);
 });
 
 test('panic pauses the robot and stamps panic_at for the worker', async () => {

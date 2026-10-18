@@ -19,7 +19,8 @@ import '@solana/wallet-adapter-react-ui/styles.css';
  *  - Mobile Wallet Adapter covers Android wallet apps; WalletConnect (optional) covers Trust, Exodus, Rainbow and others on iOS.
  */
 export default function Providers({ children }: { children: ReactNode }) {
-  const endpoint = process.env.NEXT_PUBLIC_SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
+  // all browser-side Solana calls go through our own server (public nodes refuse browser requests, which broke deposits)
+  const endpoint = useMemo(() => (typeof window !== 'undefined' ? `${window.location.origin}/api/rpc` : 'https://localhost/api/rpc'), []);
   const wallets = useMemo(() => {
     const origin = typeof window !== 'undefined' ? window.location.origin : 'https://localhost';
     const list: any[] = [

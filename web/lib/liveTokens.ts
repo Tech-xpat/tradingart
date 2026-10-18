@@ -37,6 +37,11 @@ export function localChange(mint: string, sec: number): number {
   const cut = Date.now() / 1000 - sec; let ref = b[0][1]; for (const x of b) if (x[0] >= cut) { ref = x[1]; break; }
   return ref > 0 ? ((b[b.length - 1][4] - ref) / ref) * 100 : 0;
 }
+/** The newest trades across ALL coins this browser sees, newest last (for the live ticker). */
+export type TapeRow = { id: number; t: number; side: 'buy' | 'sell'; sol: number; mint: string; mcapSol: number; who?: string };
+const tape: TapeRow[] = [];
+export const getTape = (): TapeRow[] => tape;
+
 export function recordTrade(m: any) {
   if (!m || typeof m.mint !== 'string') return;
   if (typeof m.signature === 'string') { if (seenSigs.has(m.signature)) return; seenSigs.add(m.signature); if (seenSigs.size > 4000) seenSigs.delete(seenSigs.values().next().value as string); } // two sockets can carry the same trade
@@ -46,6 +51,7 @@ export function recordTrade(m: any) {
   if (!(p > 0)) return;
   let b = localBars.get(m.mint); if (!b) { if (localBars.size > 400) localBars.delete(localBars.keys().next().value as string); b = []; localBars.set(m.mint, b); }
   charting.addTrade(b, { t: Date.now() / 1000, p, v: Number(m.solAmount) || 0, side: tx === 'create' ? 'buy' : tx }, 5, 720);
+  tape.push({ id: tradeSeq + 1, t: Date.now(), side: tx === 'sell' ? 'sell' : 'buy', sol: Number(m.solAmount) || 0, mint: m.mint, mcapSol: p, who: typeof m.traderPublicKey === 'string' ? m.traderPublicKey : undefined }); if (tape.length > 60) tape.splice(0, tape.length - 60);
   let l = localTrades.get(m.mint); if (!l) { if (localTrades.size > 120) localTrades.delete(localTrades.keys().next().value as string); l = []; localTrades.set(m.mint, l); }
   l.push({ id: ++tradeSeq, t: Date.now(), side: tx === 'sell' ? 'sell' : 'buy', sol: Number(m.solAmount) || 0, mcapSol: p, who: typeof m.traderPublicKey === 'string' ? m.traderPublicKey : undefined, sig: typeof m.signature === 'string' ? m.signature.slice(0, 10) : undefined }); if (l.length > 80) l.shift();
 }

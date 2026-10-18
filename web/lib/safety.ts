@@ -36,3 +36,15 @@ export function assess(i: SafetyInput): Flag[] {
   out.push({ key: 'phish', icon: '🎣', label: 'Phishing', level: t ? (bad ? 'bad' : 'ok') : 'unknown', text: !t ? 'No description to check.' : bad ? 'The description contains wording or links typical of wallet-drain scams. Do not connect your wallet to anything it links to.' : 'No scam wording or suspicious links in the description.' });
   return out;
 }
+
+/**
+ * pump.fun's bonding-curve account stores the creator's wallet. Layout: 8-byte discriminator, five u64 numbers (40 bytes),
+ * one bool, then the 32-byte creator. Returns base58 or null when the account is too short or the key is all zeros.
+ */
+export function parseCreator(data: Uint8Array | null | undefined, toBase58: (b: Uint8Array) => string): string | null {
+  if (!data || data.length < 81) return null;
+  const k = data.slice(49, 81);
+  if (k.every((x) => x === 0)) return null;
+  return toBase58(k);
+}
+export type DevInfo = { address: string; pct: number | null; sol: number | null; source: 'launch' | 'chain' };

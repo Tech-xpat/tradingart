@@ -2,11 +2,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import Chart from './Chart';
 import * as charting from '@/lib/charting';
-import { useLiveTokens, LIST_SIZE, curveProgress, getLocalBars, getLocalTrades, recordTrade, STREAM, type Tok, type FeedStatus } from '@/lib/liveTokens';
+import { useLiveTokens, getTape, LIST_SIZE, curveProgress, getLocalBars, getLocalTrades, recordTrade, STREAM, type Tok, type FeedStatus } from '@/lib/liveTokens';
 import type { TokenView } from '@/lib/dex';
 import { riskOf, type Risk } from '@/lib/risk';
 import { api, Sheet, ago, usd, short, type Me, type Plan, AGENT_DEFAULT } from './shared';
-import type { Flag } from '@/lib/safety';
+import type { Flag, DevInfo } from '@/lib/safety';
 
 const STATUS_TEXT: Record<FeedStatus, string> = { connecting: 'Connecting…', live: 'Live', fallback: 'Backup feed' };
 
@@ -62,15 +62,16 @@ function Flash({ v, children, className }: { v: number | null | undefined; child
 }
 
 /** Warning icons for a coin. Fetched a couple at a time and cached, so a long list does not hammer the network. */
-const safetyCache = new Map<string, Flag[] | 'err'>();
+type Safety = { flags: Flag[]; dev: DevInfo | null };
+const safetyCache = new Map<string, Safety | 'err'>();
 const safetyWait: Array<() => void> = []; let safetyBusy = 0;
 function safetySlot(): Promise<void> { return new Promise((res) => { const go = () => { safetyBusy++; res(); }; if (safetyBusy < 2) go(); else safetyWait.push(go); }); }
 function safetyDone() { safetyBusy--; const n = safetyWait.shift(); if (n) n(); }
-function useSafety(mint: string): Flag[] | null {
-  const [f, setF] = useState<Flag[] | null>(() => { const c = safetyCache.get(mint); return Array.isArray(c) ? c : null; });
+function useSafety(mint: string): Safety | null {
+  const [f, setF] = useState<Safety | null>(() => { const c = safetyCache.get(mint); return c && c !== 'err' ? c : null; });
   useEffect(() => {
     const c = safetyCache.get(mint);
-    if (Array.isArray(c)) { setF(c); return; }
+    if (c && c !== 'err') { setF(c); return; }
     if (c === 'err') return;
     let dead = false;
     (async () => {
@@ -79,7 +80,7 @@ function useSafety(mint: string): Flag[] | null {
         if (dead) return;
         const r = await fetch(`/api/safety?mint=${mint}`); const j = await r.json();
         if (!r.ok || !Array.isArray(j.flags)) throw new Error('x');
-        safetyCache.set(mint, j.flags); if (!dead) setF(j.flags);
+        const v: Safety = { flags: j.flags, dev: j.dev || null }; safetyCache.set(mint, v); if (!dead) setF(v);
       } catch { safetyCache.set(mint, 'err'); setTimeout(() => safetyCache.delete(mint), 60000); } finally { safetyDone(); }
     })();
     return () => { dead = true; };
@@ -88,15 +89,56 @@ function useSafety(mint: string): Flag[] | null {
 }
 const MARK: Record<Flag['level'], string> = { ok: '✓', warn: '!', bad: '✕', unknown: '?' };
 function Flags({ mint, detail }: { mint: string; detail?: boolean }) {
-  const f = useSafety(mint);
+  const sf = useSafety(mint); const f = sf ? sf.flags : null;
   if (!f) return <div className="flags" aria-label="Checking safety">{['🔒', '❄️', '🐋', '👤', '🎣'].map((i) => <span key={i} className="flag unknown"><i>{i}</i><u>…</u></span>)}</div>;
   if (detail) return (
     <div className="flagdetail" aria-label="Safety checks">
       {f.map((x) => <div key={x.key} className={`flagrow ${x.level}`}><span className="flag big"><i>{x.icon}</i><u>{MARK[x.level]}</u></span><div><b>{x.label}</b><p>{x.text}</p></div></div>)}
+      {sf?.dev && <DevWallet dev={sf.dev} />}
       <p className="hint">Built from public chain data. A green row is not a guarantee: it only means that particular warning sign was not found.</p>
     </div>
   );
   return <div className="flags" aria-label="Safety checks">{f.map((x) => <span key={x.key} className={`flag ${x.level}`} title={`${x.label}: ${x.text}`}><i>{x.icon}</i><u>{MARK[x.level]}</u></span>)}</div>;
+}
+
+/** Every buy and sell across all coins, as it happens. New rows slide in at the top; size shows how big the trade is. */
+function LiveTape({ find, solUsd, onOpen }: { find: (m: string) => Tok | null | undefined; solUsd: number | null; onOpen: (m: string) => void }) {
+  const [, setN] = useState(0);
+  useEffect(() => { const id = setInterval(() => setN((n) => n + 1), 700); return () => clearInterval(id); }, []);
+  const rows = getTape().slice(-9).reverse();
+  return (
+    <section className="tape" aria-label="Live trades">
+      <div className="tapehead"><b>⚡ Live trades</b><small>every buy and sell as it happens</small></div>
+      {rows.length === 0 ? <div className="hint">Waiting for trades…</div> : rows.map((r) => {
+        const c = find(r.mint);
+        return (
+          <button key={r.id} className={`taperow ${r.side}`} onClick={() => onOpen(r.mint)}>
+            <span className="tside">{r.side === 'buy' ? 'BUY' : 'SELL'}</span>
+            <span className="tname">{c?.symbol ? `$${c.symbol}` : c?.name || short(r.mint)}</span>
+            <b className="tsol" style={{ fontSize: `${Math.min(22, 13 + r.sol * 2)}px` }}>{r.sol.toFixed(2)} SOL{solUsd ? <em> · ${Math.round(r.sol * solUsd)}</em> : null}</b>
+            <span className="twho mono">{r.who ? short(r.who) : ''}</span>
+          </button>
+        );
+      })}
+    </section>
+  );
+}
+
+function DevWallet({ dev }: { dev: DevInfo }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="devwallet" aria-label="Developer wallet">
+      <div className="devtop"><b>👤 Developer wallet</b><span>{dev.source === 'launch' ? 'seen at launch' : 'read from the coin on-chain'}</span></div>
+      <div className="addr"><span style={{ flex: 1 }}>{dev.address}</span><button className="btn btn-ghost sm" onClick={() => { navigator.clipboard?.writeText(dev.address); setCopied(true); setTimeout(() => setCopied(false), 1500); }}>{copied ? 'Copied' : 'Copy'}</button></div>
+      <div className="devstats">
+        <div><span>Still holds</span><b className={dev.pct == null ? '' : dev.pct >= 15 ? 'dn' : dev.pct >= 6 ? '' : 'up'}>{dev.pct == null ? '–' : `${dev.pct.toFixed(2)}%`}</b></div>
+        <div><span>Wallet balance</span><b>{dev.sol == null ? '–' : `${dev.sol.toFixed(2)} SOL`}</b></div>
+      </div>
+      <div className="row" style={{ gap: 8 }}>
+        <a className="btn btn-ghost sm" href={`https://solscan.io/account/${dev.address}`} target="_blank" rel="noreferrer">All activity on Solscan ↗</a>
+      </div>
+    </div>
+  );
 }
 
 function RiskBar({ risk }: { risk: Risk }) {
@@ -474,6 +516,7 @@ export default function TokensTab({ me, onSaved, goRobot }: { me: Me | null; onS
         <button role="tab" aria-selected={sub === 'stretch'} className={sub === 'stretch' ? 'on' : ''} onClick={() => setSub('stretch')}>Final stretch<u>{L.stretch.length}</u></button>
         <button role="tab" aria-selected={sub === 'migrated'} className={sub === 'migrated' ? 'on' : ''} onClick={() => setSub('migrated')}>Migrated<u>{L.migrated.length}</u></button>
       </div>
+      <LiveTape find={feed.find} solUsd={feed.solUsd} onOpen={(m) => setOpen(m)} />
       <div className="cols">
         <Column title="New" hint={`latest ${LIST_SIZE} launches`} items={L.new} solUsd={feed.solUsd} now={now} onOpen={setOpen} on={sub === 'new'} empty="Waiting for the next launch…" />
         <Column title="Final stretch" hint="past half way to migrating" items={L.stretch} solUsd={feed.solUsd} now={now} onOpen={setOpen} on={sub === 'stretch'} empty={feed.topProgress != null ? `Nothing past half way up the curve yet. The robot is watching every launch; the closest coin is at ${Math.round(feed.topProgress * 100)}%. Coins appear here the moment they pass 50%.` : "Coins past half way up the curve show up here as the robot watches them climb."} />
