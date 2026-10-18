@@ -132,7 +132,8 @@ class Book {
 
   async tryEnter(mint, reason, opts = {}) {
     const plan = this.acct.plan;
-    if (this.open.has(mint) || this.entering) return { ok: false, why: 'busy' };
+    if (this.open.has(mint)) return { ok: false, why: 'you already hold this coin' };
+    if (this.entering) return { ok: false, why: 'busy: another buy is still being sent (a live buy can take up to a minute). Try again shortly' };
     if (this.open.size >= plan.maxConcurrent) return { ok: false, why: 'max concurrent' };
     await this.load();
     await this.rollDay();
@@ -145,7 +146,8 @@ class Book {
       if (!mkt) return { ok: false, why: 'no SOL-quoted market found' };
       if (mkt.liquidityUsd < config.MIN_LIQUIDITY_USD) return { ok: false, why: `liquidity $${Math.round(mkt.liquidityUsd)} < $${config.MIN_LIQUIDITY_USD}` };
       if (config.MAX_POOL_SHARE_PCT > 0 && plan.sizeUsd > (mkt.liquidityUsd * config.MAX_POOL_SHARE_PCT) / 100) return { ok: false, why: `size $${plan.sizeUsd} is more than ${config.MAX_POOL_SHARE_PCT}% of the pool ($${Math.round(mkt.liquidityUsd)})` };
-      if (config.REQUIRE_NO_AUTHORITIES) {
+      // coins still on pump.fun's curve (our own feed) are controlled by the pump.fun program itself, so the authority check only applies elsewhere
+      if (config.REQUIRE_NO_AUTHORITIES && !opts.manual && mkt.source !== 'own') {
         const mi = await chain.getMintInfo(mint);
         if (mi.mintAuthority || mi.freezeAuthority) return { ok: false, why: 'mint/freeze authority still active' };
       }

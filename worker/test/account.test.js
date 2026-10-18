@@ -166,3 +166,16 @@ test('live buy retries with a higher fee after a dropped tx, and never double-bu
   const r2 = await a.books.live.liveBuy(MINT, 0.05);
   assert.deepStrictEqual(calls, [1]); assert.strictEqual(r2.signature, 'SIG1');
 });
+
+test('pump.fun coins are not refused for an active authority (the program holds it), other coins still are, and busy says why', async () => {
+  const deps = fakeDeps();
+  deps.chain.getMintInfo = async () => ({ mintAuthority: 'SOMEONE', freezeAuthority: 'SOMEONE', decimals: 6 });
+  const a = mk(deps);
+  const own = deps.market.getTokenMarket;
+  deps.market.getTokenMarket = async () => ({ ...(await own()), source: 'own' });
+  assert.ok((await a.books.paper.tryEnter(MINT, 'x')).ok, 'own-feed coin enters');
+  deps.market.getTokenMarket = async () => ({ ...(await own()), source: 'dexscreener' });
+  a.books.paper.open.clear();
+  const r = await a.books.paper.tryEnter(MINT, 'x'); assert.ok(!r.ok); assert.match(r.why, /authority/);
+  a.books.paper.entering = true; const busy = await a.books.paper.tryEnter(MINT, 'x'); assert.match(busy.why, /busy: another buy/);
+});
