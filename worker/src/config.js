@@ -1,14 +1,30 @@
 require('dotenv').config();
 
-const num = (name, fb) => { const v = process.env[name]; if (v == null || v === '') return fb; const n = Number(v); return Number.isFinite(n) ? n : fb; };
-const bool = (name, fb) => { const v = process.env[name]; if (v == null || v === '') return fb; return !/^(false|0|no|off)$/i.test(String(v).trim()); };
-const list = (name) => String(process.env[name] || '').split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
+const num = (name, fb) => {
+  const v = process.env[name];
+  if (v == null || v === '') return fb;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fb;
+};
+const bool = (name, fb) => {
+  const v = process.env[name];
+  if (v == null || v === '') return fb;
+  return !/^(false|0|no|off)$/i.test(String(v).trim());
+};
+const list = (name) =>
+  String(process.env[name] || '')
+    .split(/[,\s]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
 
-const DEFAULT_RPC_URLS = ['https://api.mainnet-beta.solana.com', 'https://solana-rpc.publicnode.com'];
+const DEFAULT_RPC_URLS = [
+  'https://api.mainnet-beta.solana.com',
+  'https://solana-rpc.publicnode.com',
+];
 const rpcFromEnv = list('RPC_URLS').concat(list('RPC_URL'));
 
 module.exports = {
-  VERSION: '4.2.1-live-only',
+  VERSION: '4.3.0-live-only',
 
   SUPABASE_URL: (process.env.SUPABASE_URL || '').replace(/\/+$/, ''),
   SUPABASE_SERVICE_KEY: process.env.SUPABASE_SERVICE_KEY || '',
@@ -16,11 +32,12 @@ module.exports = {
   TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN || null,
   ADMIN_CHAT_ID: process.env.ADMIN_CHAT_ID || process.env.TELEGRAM_CHAT_ID || null,
 
-  // HARD FORCED — paper trading permanently disabled
+  // HARD FORCED — paper trading permanently removed
   LIVE_TRADING_ENABLED: true,
 
   RPC_URLS: rpcFromEnv.length ? rpcFromEnv : DEFAULT_RPC_URLS,
-  PUMPPORTAL_TRADE_URL: process.env.PUMPPORTAL_TRADE_URL || 'https://pumpportal.fun/api/trade-local',
+  PUMPPORTAL_TRADE_URL:
+    process.env.PUMPPORTAL_TRADE_URL || 'https://pumpportal.fun/api/trade-local',
   SOL_MINT: 'So11111111111111111111111111111111111111112',
 
   // platform hard caps
