@@ -98,7 +98,7 @@ class Book {
         }
         let retryable = !!(e.notSent || e.onchainError || !e.signature);
         if (e.signature && !e.onchainError && !e.notSent) {
-          const verdict = await swap.waitForSignature(e.signature, 100000);
+        const verdict = await swap.waitForSignature(e.signature, 20000);
           if (verdict.ok) { sig = e.signature; break; }
           let held = { raw: 0n };
           try { held = await chain.getTokenBalance(owner, mint); } catch (_) {}
