@@ -1,9 +1,5 @@
 /**
- * Free-RPC pool with failover.
- *
- * Public Solana RPCs rate-limit hard, so every read goes through rpc(fn): it tries the
- * next endpoint when one is rate-limited / down and parks the bad one for a while.
- * Sends go to every endpoint at once (same signed tx, so it can only land once).
+ * RPC pool. Sends go to every endpoint. Failures are logged per host.
  */
 const { Connection } = require('@solana/web3.js');
 const bs58mod = require('bs58');
@@ -12,7 +8,21 @@ const config = require('../config');
 
 const CALL_TIMEOUT_MS = 12000;
 
-const endpoints = config.RPC_URLS.map((url) => ({
+function hostOf(url) {
+  try { return new URL(url).host; } catch (_) { return 'rpc'; }
+}
+function msgOf(e) { return String((e && e.message) || e || ''); }
+function isRateLimit(e) { return /429|rate.?limit|too many requests/i.test(msgOf(e)); }
+function isTransient(e) {
+  return isRateLimit(e) || /fetch failed|ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|socket|timeout|timed out|aborted|\b(401|403|500|502|503|504)\b|Bad Gateway|Service Unavailable|Forbidden/i.test(msgOf(e));
+}
+function withTimeout(promise, ms) {
+  let t;
+  const timer = new Promise((_, reject) => { t = setTimeout(() => reject(new Error('rpc timeout')), ms); });
+  return Promise.race([promise, timer]).finally(() => clearTimeout(t));
+}
+
+const endpoints = (config.RPC_URLS || []).map((url) => ({
   url,
   label: hostOf(url),
   conn: new Connection(url, { commitment: 'confirmed', disableRetryOnRateLimit: true }),
@@ -20,44 +30,13 @@ const endpoints = config.RPC_URLS.map((url) => ({
   fails: 0,
 }));
 
+console.log(`[rpc] endpoints: ${endpoints.map((e) => e.label).join(', ') || 'NONE'}`);
+
 let cursor = 0;
 
-function hostOf(url) {
-  try {
-    return new URL(url).host;
-  } catch (_) {
-    return 'rpc';
-  }
-}
-
-function msgOf(e) {
-  return String((e && e.message) || e || '');
-}
-
-function isRateLimit(e) {
-  return /429|rate.?limit|too many requests/i.test(msgOf(e));
-}
-
-function isTransient(e) {
-  return (
-    isRateLimit(e) ||
-    /fetch failed|ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|socket|timeout|timed out|aborted|\b(401|403|500|502|503|504)\b|Bad Gateway|Service Unavailable|Forbidden/i.test(
-      msgOf(e)
-    )
-  );
-}
-
-function withTimeout(promise, ms) {
-  let t;
-  const timer = new Promise((_, reject) => {
-    t = setTimeout(() => reject(new Error('rpc timeout')), ms);
-  });
-  return Promise.race([promise, timer]).finally(() => clearTimeout(t));
-}
-
-/** Run fn(connection) on the first healthy endpoint; fail over on transient errors. */
 async function rpc(fn) {
   const n = endpoints.length;
+  if (!n) throw new Error('no RPC endpoints configured');
   const start = cursor;
   cursor = (cursor + 1) % n;
   const order = [];
@@ -65,7 +44,6 @@ async function rpc(fn) {
   const t = Date.now();
   const healthy = order.filter((e) => e.badUntil <= t);
   const tryList = healthy.length ? healthy.concat(order.filter((e) => e.badUntil > t)) : order;
-
   let lastErr;
   for (const ep of tryList) {
     try {
@@ -82,13 +60,23 @@ async function rpc(fn) {
   throw lastErr || new Error('no RPC endpoints configured');
 }
 
-/** Send the same signed tx through every endpoint. Returns the signature. */
 async function broadcast(rawTx) {
   const results = await Promise.allSettled(
-    endpoints.map((ep) => ep.conn.sendRawTransaction(rawTx, { skipPreflight: true, maxRetries: 0 }))
+    endpoints.map((ep) => ep.conn.sendRawTransaction(rawTx, {
+      skipPreflight: false,
+      maxRetries: 5,
+      preflightCommitment: 'processed',
+    }).then((sig) => ({ host: ep.label, sig })))
   );
   const ok = results.find((r) => r.status === 'fulfilled');
-  if (ok) return ok.value;
+  const fails = results
+    .map((r, i) => (r.status === 'rejected' ? `${endpoints[i].label}: ${msgOf(r.reason).slice(0, 180)}` : null))
+    .filter(Boolean);
+  if (fails.length) console.log(`[rpc] broadcast reject ${fails.join(' | ')}`);
+  if (ok) {
+    console.log(`[rpc] broadcast ok via ${ok.value.host}`);
+    return ok.value.sig;
+  }
   throw results[0].reason;
 }
 
