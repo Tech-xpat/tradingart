@@ -1,6 +1,6 @@
 /**
  * Swaps through PumpPortal local-transaction API.
- * Hardened against graduated coins (error 6063 / 0x17af).
+ * Hardened against graduated coins + aggressive landing (priority fee + rebroadcast).
  */
 const { VersionedTransaction } = require('@solana/web3.js');
 const config = require('../config');
@@ -17,10 +17,10 @@ async function buildTx(wallet, body) {
       pool: 'auto',
       ...body,
     }),
-    signal: AbortSignal.timeout(10000),
+    signal: AbortSignal.timeout(12000),
   });
   if (res.status !== 200) {
-    const text = (await res.text()).slice(0, 200);
+    const text = (await res.text()).slice(0, 250);
     throw new Error(`pumpportal ${res.status}: ${text}`);
   }
   return VersionedTransaction.deserialize(
@@ -51,7 +51,6 @@ function explainSim(err, logs) {
     err.InstructionError[1] &&
     err.InstructionError[1].Custom;
 
-  // Graduated / bonding curve complete
   if (
     code === 6063 ||
     code === 0x17af ||
@@ -72,7 +71,7 @@ function explainSim(err, logs) {
   ) {
     return {
       fatal: true,
-      why: 'the vault does not have enough SOL for this buy plus fees and account rent',
+      why: 'vault does not have enough SOL for this buy + fees + rent',
     };
   }
   if (
@@ -81,7 +80,7 @@ function explainSim(err, logs) {
   ) {
     return {
       fatal: true,
-      why: 'the vault would drop below the minimum SOL Solana requires',
+      why: 'vault would drop below Solana rent-exempt minimum',
     };
   }
   if (
@@ -89,12 +88,12 @@ function explainSim(err, logs) {
     code === 6003 ||
     /TooMuchSolRequired|TooLittleSolReceived|slippage/i.test(text)
   ) {
-    return { fatal: false, why: 'the price moved past the allowed slippage' };
+    return { fatal: false, why: 'price moved past allowed slippage' };
   }
   if (code === 6005 || /BondingCurveComplete/i.test(text)) {
     return {
       fatal: true,
-      why: 'the coin just left pump.fun for a regular pool',
+      why: 'coin just left bonding curve for a regular pool',
     };
   }
 
@@ -103,10 +102,7 @@ function explainSim(err, logs) {
     '';
   return {
     fatal: false,
-    why: `rejected by the network: ${JSON.stringify(err)} ${tail}`.slice(
-      0,
-      220
-    ),
+    why: `rejected by network: ${JSON.stringify(err)} ${tail}`.slice(0, 220),
   };
 }
 
@@ -152,7 +148,7 @@ async function landTx(tx, wallet, timeoutMs, opts = {}) {
   const started = Date.now();
   let lastSend = Date.now();
   while (Date.now() - started < timeoutMs) {
-    await sleep(400);
+    await sleep(350);
     try {
       const st = await statusOf(signature);
       if (st && st.ok) return signature;
@@ -181,16 +177,19 @@ async function landTx(tx, wallet, timeoutMs, opts = {}) {
   throw err;
 }
 
-async function waitForSignature(signature, maxMs = 75000) {
+async function waitForSignature(signature, maxMs = 90000) {
   const started = Date.now();
   while (Date.now() - started < maxMs) {
     try {
       const st = await statusOf(signature);
       if (st && st.ok) return { ok: true };
       if (st && !st.ok)
-        return { ok: false, reason: `failed on-chain ${JSON.stringify(st.err)}` };
+        return {
+          ok: false,
+          reason: `failed on-chain ${JSON.stringify(st.err)}`,
+        };
     } catch (_) {}
-    await sleep(1500);
+    await sleep(1200);
   }
   return { ok: false, reason: 'never landed (tx expired)' };
 }
@@ -203,7 +202,10 @@ function buyParams(attempt = 1) {
       config.BUY_SLIPPAGE_PCT + config.BUY_SLIPPAGE_STEP_PCT * (attempt - 1),
       config.BUY_SLIPPAGE_MAX_PCT
     ),
-    priorityFee: Number((config.BUY_PRIORITY_FEE_SOL * attempt).toFixed(6)),
+    // Aggressive fee scaling so later attempts land under congestion
+    priorityFee: Number(
+      (config.BUY_PRIORITY_FEE_SOL * Math.pow(1.9, attempt - 1)).toFixed(6)
+    ),
   };
 }
 
@@ -226,7 +228,9 @@ function sellParams(attempt = 1) {
       config.SELL_SLIPPAGE_PCT + config.SELL_SLIPPAGE_STEP_PCT * (attempt - 1),
       config.SELL_SLIPPAGE_MAX_PCT
     ),
-    priorityFee: Number((config.SELL_PRIORITY_FEE_SOL * attempt).toFixed(6)),
+    priorityFee: Number(
+      (config.SELL_PRIORITY_FEE_SOL * Math.pow(1.6, attempt - 1)).toFixed(6)
+    ),
   };
 }
 
