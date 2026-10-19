@@ -1,7 +1,3 @@
-/**
- * Swaps through PumpPortal local-transaction API.
- * Hardened against graduated coins + aggressive landing (priority fee + rebroadcast).
- */
 const { VersionedTransaction } = require('@solana/web3.js');
 const config = require('../config');
 const { rpc, broadcast, signatureOf } = require('../solana/rpc');
@@ -23,9 +19,7 @@ async function buildTx(wallet, body) {
     const text = (await res.text()).slice(0, 250);
     throw new Error(`pumpportal ${res.status}: ${text}`);
   }
-  return VersionedTransaction.deserialize(
-    new Uint8Array(await res.arrayBuffer())
-  );
+  return VersionedTransaction.deserialize(new Uint8Array(await res.arrayBuffer()));
 }
 
 async function statusOf(signature) {
@@ -35,83 +29,39 @@ async function statusOf(signature) {
   const st = res.value[0];
   if (!st) return null;
   if (st.err) return { ok: false, onchain: true, err: st.err };
-  if (
-    st.confirmationStatus === 'confirmed' ||
-    st.confirmationStatus === 'finalized'
-  )
-    return { ok: true };
+  if (st.confirmationStatus === 'confirmed' || st.confirmationStatus === 'finalized') return { ok: true };
   return null;
 }
 
 function explainSim(err, logs) {
   const text = (logs || []).join(' ');
-  const code =
-    err &&
-    err.InstructionError &&
-    err.InstructionError[1] &&
-    err.InstructionError[1].Custom;
+  const code = err && err.InstructionError && err.InstructionError[1] && err.InstructionError[1].Custom;
 
   if (
     code === 6063 ||
-    code === 0x17af ||
-    /BondingCurveComplete|bonding curve is complete|CycloneBondingCurveComplete/i.test(
-      text + JSON.stringify(err)
-    )
+    /BondingCurveComplete|bonding curve is complete|CycloneBondingCurveComplete/i.test(text + JSON.stringify(err))
   ) {
-    return {
-      fatal: true,
-      why: 'bonding curve already complete (token graduated)',
-    };
+    return { fatal: true, why: 'bonding curve already complete (token graduated)' };
   }
-
-  if (
-    /insufficient lamports|insufficient funds|InsufficientFunds/i.test(
-      text + JSON.stringify(err)
-    )
-  ) {
-    return {
-      fatal: true,
-      why: 'vault does not have enough SOL for this buy + fees + rent',
-    };
+  if (/insufficient lamports|insufficient funds|InsufficientFunds/i.test(text + JSON.stringify(err))) {
+    return { fatal: true, why: 'vault does not have enough SOL for this buy + fees + rent' };
   }
-  if (
-    err === 'InsufficientFundsForRent' ||
-    (err && err.InsufficientFundsForRent)
-  ) {
-    return {
-      fatal: true,
-      why: 'vault would drop below Solana rent-exempt minimum',
-    };
+  if (err === 'InsufficientFundsForRent' || (err && err.InsufficientFundsForRent)) {
+    return { fatal: true, why: 'vault would drop below Solana rent-exempt minimum' };
   }
-  if (
-    code === 6002 ||
-    code === 6003 ||
-    /TooMuchSolRequired|TooLittleSolReceived|slippage/i.test(text)
-  ) {
+  if (code === 6002 || code === 6003 || /TooMuchSolRequired|TooLittleSolReceived|slippage/i.test(text)) {
     return { fatal: false, why: 'price moved past allowed slippage' };
   }
-  if (code === 6005 || /BondingCurveComplete/i.test(text)) {
-    return {
-      fatal: true,
-      why: 'coin just left bonding curve for a regular pool',
-    };
-  }
+  if (code === 6005) return { fatal: true, why: 'coin just left bonding curve for a regular pool' };
 
-  const tail =
-    (logs || []).filter((l) => /fail|error|insufficient/i.test(l)).slice(-1)[0] ||
-    '';
-  return {
-    fatal: false,
-    why: `rejected by network: ${JSON.stringify(err)} ${tail}`.slice(0, 220),
-  };
+  const tail = (logs || []).filter((l) => /fail|error|insufficient/i.test(l)).slice(-1)[0] || '';
+  return { fatal: false, why: `rejected by network: ${JSON.stringify(err)} ${tail}`.slice(0, 220) };
 }
 
 async function preflight(tx) {
   let res;
   try {
-    res = await rpc((c) =>
-      c.simulateTransaction(tx, { sigVerify: false, commitment: 'confirmed' })
-    );
+    res = await rpc((c) => c.simulateTransaction(tx, { sigVerify: false, commitment: 'confirmed' }));
   } catch (_) {
     return null;
   }
@@ -153,9 +103,7 @@ async function landTx(tx, wallet, timeoutMs, opts = {}) {
       const st = await statusOf(signature);
       if (st && st.ok) return signature;
       if (st && !st.ok) {
-        const err = new Error(
-          `tx failed on-chain: ${JSON.stringify(st.err)} (${signature})`
-        );
+        const err = new Error(`tx failed on-chain: ${JSON.stringify(st.err)} (${signature})`);
         err.signature = signature;
         err.onchainError = true;
         throw err;
@@ -169,25 +117,19 @@ async function landTx(tx, wallet, timeoutMs, opts = {}) {
     }
   }
 
-  const err = new Error(
-    `not confirmed within ${Math.round(timeoutMs / 1000)}s (${signature})`
-  );
+  const err = new Error(`not confirmed within ${Math.round(timeoutMs / 1000)}s (${signature})`);
   err.signature = signature;
   err.timedOut = true;
   throw err;
 }
 
-async function waitForSignature(signature, maxMs = 90000) {
+async function waitForSignature(signature, maxMs = 100000) {
   const started = Date.now();
   while (Date.now() - started < maxMs) {
     try {
       const st = await statusOf(signature);
       if (st && st.ok) return { ok: true };
-      if (st && !st.ok)
-        return {
-          ok: false,
-          reason: `failed on-chain ${JSON.stringify(st.err)}`,
-        };
+      if (st && !st.ok) return { ok: false, reason: `failed on-chain ${JSON.stringify(st.err)}` };
     } catch (_) {}
     await sleep(1200);
   }
@@ -202,10 +144,7 @@ function buyParams(attempt = 1) {
       config.BUY_SLIPPAGE_PCT + config.BUY_SLIPPAGE_STEP_PCT * (attempt - 1),
       config.BUY_SLIPPAGE_MAX_PCT
     ),
-    // Aggressive fee scaling so later attempts land under congestion
-    priorityFee: Number(
-      (config.BUY_PRIORITY_FEE_SOL * Math.pow(1.9, attempt - 1)).toFixed(6)
-    ),
+    priorityFee: Number((config.BUY_PRIORITY_FEE_SOL * Math.pow(1.6, attempt - 1)).toFixed(6)),
   };
 }
 
@@ -228,9 +167,7 @@ function sellParams(attempt = 1) {
       config.SELL_SLIPPAGE_PCT + config.SELL_SLIPPAGE_STEP_PCT * (attempt - 1),
       config.SELL_SLIPPAGE_MAX_PCT
     ),
-    priorityFee: Number(
-      (config.SELL_PRIORITY_FEE_SOL * Math.pow(1.6, attempt - 1)).toFixed(6)
-    ),
+    priorityFee: Number((config.SELL_PRIORITY_FEE_SOL * Math.pow(1.5, attempt - 1)).toFixed(6)),
   };
 }
 
@@ -247,28 +184,4 @@ async function sellAll(wallet, mint, attempt = 1) {
   return landTx(tx, wallet, config.SELL_CONFIRM_TIMEOUT_MS);
 }
 
-async function routeCheck(wallet, mint, sol) {
-  await buildTx(wallet, {
-    action: 'buy',
-    mint,
-    amount: solAmount(sol),
-    denominatedInSol: 'true',
-    slippage: config.BUY_SLIPPAGE_PCT,
-    priorityFee: config.BUY_PRIORITY_FEE_SOL,
-  });
-  return true;
-}
-
-module.exports = {
-  buildTx,
-  landTx,
-  waitForSignature,
-  statusOf,
-  buy,
-  buyParams,
-  preflight,
-  explainSim,
-  sellAll,
-  sellParams,
-  routeCheck,
-};
+module.exports = { buildTx, landTx, waitForSignature, statusOf, buy, buyParams, preflight, explainSim, sellAll, sellParams };
