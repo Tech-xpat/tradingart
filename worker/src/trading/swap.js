@@ -10,8 +10,8 @@ async function buildTx(wallet, body) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       publicKey: wallet.publicKey.toBase58(),
-      pool: 'auto',
       ...body,
+      pool: body.pool || 'pump',
     }),
     signal: AbortSignal.timeout(12000),
   });
@@ -23,24 +23,18 @@ async function buildTx(wallet, body) {
 }
 
 async function statusOf(signature) {
-  const res = await rpc((c) =>
-    c.getSignatureStatuses([signature], { searchTransactionHistory: true })
-  );
+  const res = await rpc((c) => c.getSignatureStatuses([signature], { searchTransactionHistory: true }));
   const st = res.value[0];
   if (!st) return null;
   if (st.err) return { ok: false, onchain: true, err: st.err };
-  if (st.confirmationStatus === 'confirmed' || st.confirmationStatus === 'finalized') return { ok: true };
+  if (st.confirmationStatus === 'confirmed' || st.confirmationStatus === 'finalized' || st.confirmationStatus === 'processed') return { ok: true };
   return null;
 }
 
 function explainSim(err, logs) {
   const text = (logs || []).join(' ');
   const code = err && err.InstructionError && err.InstructionError[1] && err.InstructionError[1].Custom;
-
-  if (
-    code === 6063 ||
-    /BondingCurveComplete|bonding curve is complete|CycloneBondingCurveComplete/i.test(text + JSON.stringify(err))
-  ) {
+  if (code === 6063 || /BondingCurveComplete|bonding curve is complete/i.test(text + JSON.stringify(err))) {
     return { fatal: true, why: 'bonding curve already complete (token graduated)' };
   }
   if (/insufficient lamports|insufficient funds|InsufficientFunds/i.test(text + JSON.stringify(err))) {
@@ -53,7 +47,6 @@ function explainSim(err, logs) {
     return { fatal: false, why: 'price moved past allowed slippage' };
   }
   if (code === 6005) return { fatal: true, why: 'coin just left bonding curve for a regular pool' };
-
   const tail = (logs || []).filter((l) => /fail|error|insufficient/i.test(l)).slice(-1)[0] || '';
   return { fatal: false, why: `rejected by network: ${JSON.stringify(err)} ${tail}`.slice(0, 220) };
 }
@@ -61,8 +54,9 @@ function explainSim(err, logs) {
 async function preflight(tx) {
   let res;
   try {
-    res = await rpc((c) => c.simulateTransaction(tx, { sigVerify: false, commitment: 'confirmed' }));
-  } catch (_) {
+    res = await rpc((c) => c.simulateTransaction(tx, { sigVerify: false, commitment: 'processed', replaceRecentBlockhash: true }));
+  } catch (e) {
+    console.log(`[swap] preflight rpc error (still sending): ${e.message}`);
     return null;
   }
   const v = res && res.value;
@@ -75,7 +69,6 @@ async function landTx(tx, wallet, timeoutMs, opts = {}) {
   tx.sign([wallet]);
   const raw = tx.serialize();
   const signature = signatureOf(tx);
-
   if (opts.preflight) {
     const bad = await preflight(tx);
     if (bad) {
@@ -85,7 +78,6 @@ async function landTx(tx, wallet, timeoutMs, opts = {}) {
       throw err;
     }
   }
-
   try {
     await broadcast(raw);
   } catch (e) {
@@ -94,11 +86,10 @@ async function landTx(tx, wallet, timeoutMs, opts = {}) {
     err.notSent = true;
     throw err;
   }
-
   const started = Date.now();
   let lastSend = Date.now();
   while (Date.now() - started < timeoutMs) {
-    await sleep(350);
+    await sleep(400);
     try {
       const st = await statusOf(signature);
       if (st && st.ok) return signature;
@@ -113,17 +104,16 @@ async function landTx(tx, wallet, timeoutMs, opts = {}) {
     }
     if (Date.now() - lastSend >= config.REBROADCAST_MS) {
       lastSend = Date.now();
-      broadcast(raw).catch(() => {});
+      broadcast(raw).catch((err) => console.log(`[swap] rebroadcast: ${err.message}`));
     }
   }
-
   const err = new Error(`not confirmed within ${Math.round(timeoutMs / 1000)}s (${signature})`);
   err.signature = signature;
   err.timedOut = true;
   throw err;
 }
 
-async function waitForSignature(signature, maxMs = 100000) {
+async function waitForSignature(signature, maxMs = 20000) {
   const started = Date.now();
   while (Date.now() - started < maxMs) {
     try {
@@ -131,7 +121,7 @@ async function waitForSignature(signature, maxMs = 100000) {
       if (st && st.ok) return { ok: true };
       if (st && !st.ok) return { ok: false, reason: `failed on-chain ${JSON.stringify(st.err)}` };
     } catch (_) {}
-    await sleep(1200);
+    await sleep(1000);
   }
   return { ok: false, reason: 'never landed (tx expired)' };
 }
@@ -140,16 +130,15 @@ const solAmount = (sol) => Number(Number(sol).toFixed(6));
 
 function buyParams(attempt = 1) {
   return {
-    slippage: Math.min(
-      config.BUY_SLIPPAGE_PCT + config.BUY_SLIPPAGE_STEP_PCT * (attempt - 1),
-      config.BUY_SLIPPAGE_MAX_PCT
-    ),
+    slippage: Math.min(config.BUY_SLIPPAGE_PCT + config.BUY_SLIPPAGE_STEP_PCT * (attempt - 1), config.BUY_SLIPPAGE_MAX_PCT),
     priorityFee: Number((config.BUY_PRIORITY_FEE_SOL * Math.pow(1.6, attempt - 1)).toFixed(6)),
   };
 }
 
 async function buy(wallet, mint, sol, attempt = 1) {
   const p = buyParams(attempt);
+  const pool = String(mint).endsWith('pump') ? 'pump' : 'auto';
+  console.log(`[swap] buy ${mint.slice(0, 6)} ${sol} SOL pool=${pool} fee=${p.priorityFee} slip=${p.slippage}`);
   const tx = await buildTx(wallet, {
     action: 'buy',
     mint,
@@ -157,22 +146,21 @@ async function buy(wallet, mint, sol, attempt = 1) {
     denominatedInSol: 'true',
     slippage: p.slippage,
     priorityFee: p.priorityFee,
+    pool,
   });
   return landTx(tx, wallet, config.BUY_CONFIRM_TIMEOUT_MS, { preflight: true });
 }
 
 function sellParams(attempt = 1) {
   return {
-    slippage: Math.min(
-      config.SELL_SLIPPAGE_PCT + config.SELL_SLIPPAGE_STEP_PCT * (attempt - 1),
-      config.SELL_SLIPPAGE_MAX_PCT
-    ),
+    slippage: Math.min(config.SELL_SLIPPAGE_PCT + config.SELL_SLIPPAGE_STEP_PCT * (attempt - 1), config.SELL_SLIPPAGE_MAX_PCT),
     priorityFee: Number((config.SELL_PRIORITY_FEE_SOL * Math.pow(1.5, attempt - 1)).toFixed(6)),
   };
 }
 
 async function sellAll(wallet, mint, attempt = 1) {
   const p = sellParams(attempt);
+  const pool = String(mint).endsWith('pump') ? 'pump' : 'auto';
   const tx = await buildTx(wallet, {
     action: 'sell',
     mint,
@@ -180,6 +168,7 @@ async function sellAll(wallet, mint, attempt = 1) {
     denominatedInSol: 'false',
     slippage: p.slippage,
     priorityFee: p.priorityFee,
+    pool,
   });
   return landTx(tx, wallet, config.SELL_CONFIRM_TIMEOUT_MS);
 }
