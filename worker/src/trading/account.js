@@ -1,7 +1,8 @@
 /**
  * LIVE-ONLY trading account.
- * Paper trading permanently removed.
- * Graduated coins (bonding curve complete) are rejected before any buy is sent.
+ * Paper permanently removed.
+ * Graduated coins blocked.
+ * Hardened landing logic.
  */
 const config = require('../config');
 const logger = require('../utils/logger');
@@ -136,21 +137,25 @@ class Book {
         sig = await swap.buy(signer, mint, sol, attempt);
         break;
       } catch (e) {
-        // Treat bonding-curve-complete as fatal — never retry
         const msg = String(e.message || '');
+
+        // Graduated / bonding curve complete → fatal, never retry
         if (
           msg.includes('6063') ||
           msg.includes('0x17af') ||
           msg.includes('BondingCurveComplete') ||
-          msg.includes('bonding curve is complete')
+          msg.includes('bonding curve is complete') ||
+          msg.includes('graduated')
         ) {
           e.fatal = true;
           throw e;
         }
 
         let retryable = !!(e.notSent || e.onchainError || !e.signature);
+
         if (e.signature && !e.onchainError && !e.notSent) {
-          const verdict = await swap.waitForSignature(e.signature, 75000);
+          // Sent but unconfirmed → wait longer, then decide
+          const verdict = await swap.waitForSignature(e.signature, 90000);
           if (verdict.ok) {
             sig = e.signature;
             break;
@@ -164,12 +169,17 @@ class Book {
             break;
           }
           retryable = true;
-          e = new Error(`buy did not land: ${verdict.reason} (${e.signature})`);
+          e = new Error(
+            `buy did not land: ${verdict.reason} (${e.signature})`
+          );
         }
+
         if (e.fatal || !retryable || attempt >= attempts) throw e;
+
         logger.info(
-          `[${this.acct.tag}] buy attempt ${attempt} failed (${String(e.message).slice(0, 90)}); retrying`
+          `[${this.acct.tag}] buy attempt ${attempt} failed (${msg.slice(0, 100)}); retrying with higher fee`
         );
+        await sleep(400 * attempt);
       }
     }
 
@@ -191,23 +201,23 @@ class Book {
     }
 
     let bal = { raw: 0n, decimals: null };
-    for (let i = 0; i < 6 && bal.raw <= 0n; i++) {
+    for (let i = 0; i < 8 && bal.raw <= 0n; i++) {
       try {
         bal = await chain.getTokenBalance(owner, mint);
       } catch (_) {}
-      if (bal.raw <= 0n) await sleep(700);
+      if (bal.raw <= 0n) await sleep(600);
     }
-    if (bal.raw <= 0n)
+    if (bal.raw <= 0n) {
       throw new Error(
-        `buy tx confirmed but no tokens found in the vault: ${scanUrl(sig)}`
+        `buy tx confirmed but no tokens found in vault: ${scanUrl(sig)}`
       );
+    }
 
     const spent = solBefore - (await chain.getSolLamports(owner));
     return {
       tokenRaw: bal.raw,
       decimals: bal.decimals,
-      costLamports:
-        spent > 0n ? spent : BigInt(Math.round(sol * 1e9)),
+      costLamports: spent > 0n ? spent : BigInt(Math.round(sol * 1e9)),
       signature: sig,
       source: spent > 0n ? 'balance' : 'requested-amount',
     };
@@ -215,12 +225,10 @@ class Book {
 
   async tryEnter(mint, reason, opts = {}) {
     const plan = this.acct.plan;
-    if (this.open.has(mint)) return { ok: false, why: 'you already hold this coin' };
+    if (this.open.has(mint))
+      return { ok: false, why: 'you already hold this coin' };
     if (this.entering)
-      return {
-        ok: false,
-        why: 'busy: another buy is still being sent',
-      };
+      return { ok: false, why: 'busy: another buy is still being sent' };
     if (this.open.size >= plan.maxConcurrent)
       return { ok: false, why: 'max concurrent' };
 
@@ -243,13 +251,15 @@ class Book {
       const mkt = await market.getTokenMarket(mint);
       if (!mkt) return { ok: false, why: 'no SOL-quoted market found' };
 
-      // HARD BLOCK: graduated / bonding-curve-complete coins
+      // HARD BLOCK graduated coins
       if (
         mkt.bondingCurveComplete === true ||
         mkt.graduated === true ||
         mkt.source === 'raydium' ||
         mkt.source === 'pumpswap' ||
-        String(mkt.pool || '').toLowerCase().includes('raydium')
+        String(mkt.pool || '')
+          .toLowerCase()
+          .includes('raydium')
       ) {
         return {
           ok: false,
@@ -267,11 +277,12 @@ class Book {
       if (
         !curveCoin &&
         config.MAX_POOL_SHARE_PCT > 0 &&
-        plan.sizeUsd > (mkt.liquidityUsd * config.MAX_POOL_SHARE_PCT) / 100
+        plan.sizeUsd >
+          (mkt.liquidityUsd * config.MAX_POOL_SHARE_PCT) / 100
       ) {
         return {
           ok: false,
-          why: `size $${plan.sizeUsd} is more than ${config.MAX_POOL_SHARE_PCT}% of the pool`,
+          why: `size $${plan.sizeUsd} > ${config.MAX_POOL_SHARE_PCT}% of pool`,
         };
       }
 
@@ -290,7 +301,7 @@ class Book {
       if (bal < config.MIN_VAULT_SOL) {
         return {
           ok: false,
-          why: `vault balance ${bal.toFixed(4)} SOL below the ${config.MIN_VAULT_SOL} SOL minimum`,
+          why: `vault balance ${bal.toFixed(4)} SOL below ${config.MIN_VAULT_SOL} SOL minimum`,
         };
       }
 
@@ -298,7 +309,7 @@ class Book {
       if (sol < config.MIN_POSITION_SOL) {
         return {
           ok: false,
-          why: `size ${sol} SOL below minimum. Need balance + limits to cover ${config.MIN_POSITION_SOL} SOL + fees`,
+          why: `size ${sol} SOL below minimum`,
         };
       }
 
@@ -402,7 +413,9 @@ class Book {
     else if (Date.now() - pos.openedAt >= maxHoldMs) reason = 'max_hold';
 
     if (reason)
-      this.exit(pos, reason).catch((e) => logger.error('exit crashed:', e.message));
+      this.exit(pos, reason).catch((e) =>
+        logger.error('exit crashed:', e.message)
+      );
   }
 
   async monitorTick() {
@@ -453,7 +466,7 @@ class Book {
       } catch (e) {
         lastErr = e;
         if (e.signature && e.timedOut) {
-          const v = await swap.waitForSignature(e.signature, 45000);
+          const v = await swap.waitForSignature(e.signature, 60000);
           if (v.ok) sig = e.signature;
         }
         if (!sig) {
@@ -468,21 +481,21 @@ class Book {
                 source: 'already-flat',
               };
           } catch (_) {}
-          await sleep(300);
+          await sleep(400);
           continue;
         }
       }
 
       landed += 1;
       let remaining = null;
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < 4; i++) {
         try {
           remaining = (await chain.getTokenBalance(owner, pos.mint)).raw;
         } catch (_) {
           remaining = null;
         }
         if (remaining === 0n) break;
-        await sleep(600);
+        await sleep(500);
       }
 
       if (remaining === 0n) {
@@ -646,7 +659,7 @@ class Account {
     this._notify = o.notify || (() => {});
     this.tag =
       String(o.wallet).slice(0, 4) + '…' + String(o.wallet).slice(-3);
-    this.book = new Book(this); // single live book only
+    this.book = new Book(this);
     this._signer = null;
     this.lastPanicAt =
       o.settings && o.settings.panic_at
@@ -686,7 +699,7 @@ class Account {
     )
       this.nextScanAt = 0;
 
-    // LIVE ONLY — requires vault + signed consent. Env flag ignored.
+    // LIVE ONLY
     this.liveAllowed = !!(this.vaultAddress && this.consent);
   }
 
