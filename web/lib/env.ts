@@ -1,4 +1,3 @@
-/** Server-side env, read lazily so next build works without secrets. */
 function need(name: string): string {
   const v = process.env[name];
   if (!v) throw new Error(`Missing environment variable ${name}`);
@@ -31,7 +30,7 @@ export const env = {
   get rpcUrl() {
     return process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
   },
-  // HARD FORCED — live only
+  // HARD FORCED
   get liveEnabled() {
     return true;
   },
@@ -44,7 +43,7 @@ export const LIMITS = {
   maxPositionSol: { min: 0.005, max: 1000 },
   maxDailyLossPct: { min: 1, max: 50 },
   maxConcurrent: { min: 1, max: 10 },
-  minVaultSolForLive: 0.02,
+  minVaultSolForLive: 0.03,
   minSizeUsd: 1,
   defaultSizeUsd: 7,
 };
