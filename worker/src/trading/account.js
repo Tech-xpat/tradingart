@@ -1,7 +1,3 @@
-/**
- * FORCE LIVE — all restrictions removed.
- * Will attempt real buys on almost any match.
- */
 const config = require('../config');
 const logger = require('../utils/logger');
 
@@ -27,9 +23,7 @@ class Book {
     return this.d.db.setState(this.acct.userId, this.key(name), value)
       .catch((e) => logger.error(`[${this.acct.tag}] save ${name}:`, e.message));
   }
-  persistPositions() {
-    return this.save('positions', [...this.open.values()].map((p) => ({ ...p })));
-  }
+  persistPositions() { return this.save('positions', [...this.open.values()].map((p) => ({ ...p }))); }
   persistDaily() { return this.save('daily', { ...this.daily }); }
   persistHistory() { return this.save('history', this.history.slice(0, 50)); }
 
@@ -42,7 +36,7 @@ class Book {
       const s = await db.getState(this.acct.userId, this.key('positions'));
       saved = Array.isArray(s) ? s : [];
     } catch (e) {
-      this.acct.notify(`⚠️ Could not load saved positions: ${e.message}`);
+      this.acct.notify(`Could not load saved positions: ${e.message}`);
     }
     try {
       const x = await db.getState(this.acct.userId, this.key('daily'));
@@ -52,17 +46,12 @@ class Book {
       const h = await db.getState(this.acct.userId, this.key('history'));
       if (Array.isArray(h)) this.history = h;
     } catch (_) {}
-
     for (const p of saved) {
       if (!p || !p.mint) continue;
       try {
         if ((await chain.getTokenBalance(this.acct.vaultAddress, p.mint)).raw <= 0n) continue;
       } catch (_) {}
-      this.open.set(p.mint, {
-        ...p,
-        status: p.status === 'selling' ? 'open' : p.status || 'open',
-        priceMisses: 0,
-      });
+      this.open.set(p.mint, { ...p, status: p.status === 'selling' ? 'open' : p.status || 'open', priceMisses: 0 });
     }
   }
 
@@ -81,14 +70,11 @@ class Book {
   }
 
   async sizeSol(overrideSol) {
-    const plan = this.acct.plan;
     const bal = await this.currentBalanceSol();
     const usable = Math.max(0, bal - config.SOL_FEE_RESERVE);
-    const solUsd = await this.d.scanner.fetchSolPriceUsd().catch(() => 150);
-    let sol = overrideSol > 0 ? overrideSol : (Number(plan.sizeUsd) || 5) / solUsd;
-    sol = Math.min(sol, Number(plan.maxPositionSol) || 0.1);
-    sol = Math.min(sol, usable * 0.97);
-    if (sol < 0.004) sol = 0; // only absolute floor
+    let sol = overrideSol > 0 ? overrideSol : (config.FORCE_SIZE_SOL || 0.015);
+    sol = Math.min(sol, usable * 0.9);
+    if (sol < 0.008) sol = 0;
     return Math.floor(sol * 1e6) / 1e6;
   }
 
@@ -106,8 +92,11 @@ class Book {
         break;
       } catch (e) {
         const msg = String(e.message || '');
+        if (/insufficient|rent|graduated|bonding curve/i.test(msg)) {
+          e.fatal = true;
+          throw e;
+        }
         let retryable = !!(e.notSent || e.onchainError || !e.signature);
-
         if (e.signature && !e.onchainError && !e.notSent) {
           const verdict = await swap.waitForSignature(e.signature, 100000);
           if (verdict.ok) { sig = e.signature; break; }
@@ -117,7 +106,6 @@ class Book {
           retryable = true;
           e = new Error(`buy did not land: ${verdict.reason} (${e.signature})`);
         }
-
         if (e.fatal || !retryable || attempt >= attempts) throw e;
         logger.info(`[${this.acct.tag}] buy attempt ${attempt} failed (${msg.slice(0, 90)}); retrying`);
         await sleep(300 * attempt);
@@ -126,24 +114,14 @@ class Book {
 
     const fill = await fills.readFill(sig, owner, mint);
     if (fill && !fill.failed && fill.tokenDeltaRaw > 0n && fill.solDeltaLamports != null && fill.solDeltaLamports < 0n) {
-      return {
-        tokenRaw: fill.tokenDeltaRaw,
-        decimals: fill.decimals,
-        costLamports: -fill.solDeltaLamports,
-        signature: sig,
-        source: 'tx',
-      };
+      return { tokenRaw: fill.tokenDeltaRaw, decimals: fill.decimals, costLamports: -fill.solDeltaLamports, signature: sig, source: 'tx' };
     }
-
     let bal = { raw: 0n, decimals: null };
     for (let i = 0; i < 10 && bal.raw <= 0n; i++) {
       try { bal = await chain.getTokenBalance(owner, mint); } catch (_) {}
       if (bal.raw <= 0n) await sleep(500);
     }
-    if (bal.raw <= 0n) {
-      throw new Error(`buy confirmed but no tokens in vault: ${scanUrl(sig)}`);
-    }
-
+    if (bal.raw <= 0n) throw new Error(`buy confirmed but no tokens in vault: ${scanUrl(sig)}`);
     const spent = solBefore - (await chain.getSolLamports(owner));
     return {
       tokenRaw: bal.raw,
@@ -157,58 +135,36 @@ class Book {
   async tryEnter(mint, reason, opts = {}) {
     if (this.open.has(mint)) return { ok: false, why: 'already hold this coin' };
     if (this.entering) return { ok: false, why: 'busy' };
-
     await this.load();
     await this.rollDay();
-
     this.entering = true;
     try {
-      const { market } = this.d;
-      const mkt = await market.getTokenMarket(mint);
+      const mkt = await this.d.market.getTokenMarket(mint);
       if (!mkt) return { ok: false, why: 'no market data' };
 
-      // NO graduated check, NO liquidity check, NO authority check
-
       const bal = await this.currentBalanceSol();
-      if (bal < 0.008) {
-        return { ok: false, why: `vault only ${bal.toFixed(4)} SOL — deposit more` };
-      }
-
       const sol = await this.sizeSol(opts.sizeSol);
-      if (sol < 0.004) {
-        return { ok: false, why: `calculated size too small (${sol})` };
+      logger.info(`[${this.acct.tag}] vault=${bal.toFixed(4)} SOL size=${sol} SOL`);
+      if (sol < 0.008) {
+        return { ok: false, why: `vault ${bal.toFixed(4)} SOL too small for a ${sol || 0} SOL buy plus fees. Deposit at least 0.04 SOL.` };
       }
 
       logger.info(`[${this.acct.tag}] FORCE ENTER ${short(mint)} ${sol} SOL (${reason}) [LIVE]`);
       const fill = await this.liveBuy(mint, sol);
-
       const costSol = toSol(fill.costLamports);
       const tokensUi = Number(fill.tokenRaw) / 10 ** fill.decimals;
-
       const pos = {
-        mint,
-        openedAt: Date.now(),
-        dryRun: false,
-        status: 'open',
-        costLamports: String(fill.costLamports),
-        tokenRaw: String(fill.tokenRaw),
-        decimals: fill.decimals,
-        sizeSol: costSol,
-        sizeUsd: this.acct.plan.sizeUsd,
-        entryPriceNative: costSol / tokensUi,
-        fillSource: fill.source,
-        buySig: fill.signature,
-        reason,
+        mint, openedAt: Date.now(), dryRun: false, status: 'open',
+        costLamports: String(fill.costLamports), tokenRaw: String(fill.tokenRaw), decimals: fill.decimals,
+        sizeSol: costSol, sizeUsd: this.acct.plan.sizeUsd,
+        entryPriceNative: tokensUi > 0 ? costSol / tokensUi : 0,
+        fillSource: fill.source, buySig: fill.signature, reason,
         mode: this.acct.plan.riskProfile || 'force',
         takeProfitPct: opts.tp > 0 ? opts.tp : (this.acct.plan.takeProfitPct || 40),
         stopLossPct: opts.sl > 0 ? opts.sl : (this.acct.plan.stopLossPct || 25),
         maxHoldMin: opts.holdMin > 0 ? opts.holdMin : (this.acct.plan.maxHoldMin || 5),
-        lastPnl: null,
-        lastPrice: null,
-        priceMisses: 0,
-        stuckRounds: 0,
+        lastPnl: null, lastPrice: null, priceMisses: 0, stuckRounds: 0,
       };
-
       this.open.set(mint, pos);
       this.daily.tradesToday = (this.daily.tradesToday || 0) + 1;
       this.persistPositions();
@@ -222,14 +178,11 @@ class Book {
     }
   }
 
-  // ... rest of Book (monitor, sell, exit) stays the same as previous full version
-  // (copy the monitorTick, liveSell, finalizeClose, exit, exitAll from the previous account.js I gave you)
-  // For brevity I keep the structure — use the full previous monitor/sell logic
-
   markPnl(pos, priceNative) {
     const tokensUi = Number(pos.tokenRaw) / 10 ** pos.decimals;
     const value = tokensUi * priceNative * (1 - config.EXIT_COST_PCT / 100);
     const cost = Number(pos.costLamports) / 1e9;
+    if (!(cost > 0)) return 0;
     return ((value - cost) / cost) * 100;
   }
 
@@ -247,7 +200,6 @@ class Book {
         pos.priceMisses = 0;
       } else pos.priceMisses += 1;
     } catch (_) { pos.priceMisses += 1; }
-
     let reason = null;
     if (pnl != null && pnl >= tp) reason = 'take_profit';
     else if (pnl != null && pnl <= sl) reason = 'stop_loss';
@@ -275,14 +227,12 @@ class Book {
   }
 
   async liveSell(pos) {
-    // same solid liveSell from previous version
     const { chain, swap, fills } = this.d;
     const signer = await this.acct.getSigner();
     const owner = this.acct.vaultAddress;
     const flat = async () => (await chain.getTokenBalance(owner, pos.mint)).raw <= 0n;
     const solBefore = await chain.getSolLamports(owner).catch(() => null);
     try { if (await flat()) return { proceedsLamports: null, sig: null, source: 'already-flat' }; } catch (_) {}
-
     let lastErr = null;
     for (let attempt = 1; attempt <= config.SELL_RETRIES; attempt++) {
       let sig = null;
@@ -307,13 +257,9 @@ class Book {
       }
       if (remaining === 0n) {
         const fill = await fills.readFill(sig, owner, pos.mint);
-        if (fill && !fill.failed && fill.solDeltaLamports != null) {
-          return { proceedsLamports: fill.solDeltaLamports, sig, source: 'tx' };
-        }
+        if (fill && !fill.failed && fill.solDeltaLamports != null) return { proceedsLamports: fill.solDeltaLamports, sig, source: 'tx' };
         const solAfter = await chain.getSolLamports(owner).catch(() => null);
-        if (solBefore != null && solAfter != null) {
-          return { proceedsLamports: solAfter - solBefore, sig, source: 'balance' };
-        }
+        if (solBefore != null && solAfter != null) return { proceedsLamports: solAfter - solBefore, sig, source: 'balance' };
         return { proceedsLamports: null, sig, source: 'unknown' };
       }
     }
@@ -330,8 +276,7 @@ class Book {
     }
     this.open.delete(pos.mint);
     const closedAt = Date.now();
-    const pct = realizedSol != null ? (realizedSol / costSol) * 100 : null;
-
+    const pct = realizedSol != null && costSol > 0 ? (realizedSol / costSol) * 100 : null;
     this.history.unshift({
       mint: pos.mint, openedAt: pos.openedAt, closedAt, reason,
       costSol, proceedsSol, realizedSol, pct,
@@ -339,19 +284,16 @@ class Book {
     });
     this.history = this.history.slice(0, 50);
     this.persistPositions(); this.persistDaily(); this.persistHistory();
-
     this.d.db.insertTrade({
       user_id: this.acct.userId, paper: false, mode: pos.mode, mint: pos.mint,
       entry_reason: pos.reason, exit_reason: reason,
       cost_sol: costSol, proceeds_sol: proceedsSol, realized_sol: realizedSol, pct,
       hold_sec: pos.openedAt ? Math.round((closedAt - pos.openedAt) / 1000) : null,
-      buy_sig: pos.buySig, sell_sig: result.sig,
-      features: {},
+      buy_sig: pos.buySig, sell_sig: result.sig, features: {},
     }).catch(() => {});
-
-    const head = realizedSol == null ? '⚪' : realizedSol >= 0 ? '🟢' : '🔴';
+    const head = realizedSol == null ? 'white' : realizedSol >= 0 ? 'win' : 'loss';
     const money = realizedSol == null ? 'result unknown' : `${realizedSol >= 0 ? '+' : ''}${realizedSol.toFixed(4)} SOL`;
-    this.acct.notify(`${head} EXIT ${short(pos.mint)} · ${reason}\n${money}${result.sig ? `\n${scanUrl(result.sig)}` : ''}`);
+    this.acct.notify(`${head} EXIT ${short(pos.mint)} ${reason} ${money}${result.sig ? ` ${scanUrl(result.sig)}` : ''}`);
   }
 
   async exit(pos, reason) {
@@ -367,7 +309,7 @@ class Book {
       pos.retryAt = Date.now() + config.STUCK_RETRY_MS;
       this.persistPositions();
       if (pos.stuckRounds === 1 || pos.stuckRounds % 4 === 0) {
-        this.acct.notify(`🚨 SELL FAILED ${short(pos.mint)}\n${err.message.slice(0, 140)}`);
+        this.acct.notify(`SELL FAILED ${short(pos.mint)} ${err.message.slice(0, 140)}`);
       }
     }
   }
@@ -375,10 +317,7 @@ class Book {
   exitAll(reason) {
     let n = 0;
     for (const pos of [...this.open.values()]) {
-      if (pos.status !== 'selling') {
-        this.exit(pos, reason).catch(() => {});
-        n++;
-      }
+      if (pos.status !== 'selling') { this.exit(pos, reason).catch(() => {}); n++; }
     }
     return n;
   }
@@ -412,15 +351,10 @@ class Account {
     }
     const { effectivePlan } = require('../plans');
     this.plan = effectivePlan(settings, this.consent);
-
-    // FORCE LIVE if vault exists — consent optional now
     this.liveAllowed = !!this.vaultAddress;
   }
 
-  liveBlock() {
-    if (!this.vaultAddress) return 'no vault';
-    return null;
-  }
+  liveBlock() { return this.vaultAddress ? null : 'no vault'; }
 
   noteScan(info) {
     this.lastScan = { at: Date.now(), book: 'live', plan: this.plan?.name || 'force', ...info, note: this.liveBlock() };
@@ -457,9 +391,7 @@ class Account {
   async manualBuy(mint, o = {}) {
     if (!this.liveAllowed) return { ok: false, why: this.liveBlock() || 'no vault', paper: false };
     await this.load();
-    const res = await this.book.tryEnter(mint, 'manual', {
-      manual: true, sizeSol: o.sizeSol, tp: o.tp, sl: o.sl, holdMin: o.holdMin,
-    });
+    const res = await this.book.tryEnter(mint, 'manual', { manual: true, sizeSol: o.sizeSol, tp: o.tp, sl: o.sl, holdMin: o.holdMin });
     return { ...res, paper: false };
   }
 
