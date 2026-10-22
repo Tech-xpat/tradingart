@@ -139,7 +139,18 @@ export default function RobotTab({ me, refresh, run, busy, say, sign, openSheet 
     await api('/api/consent', { method: 'POST', body: JSON.stringify({ message: preview, proof }) });
     setPreview(null); await refresh(); say('ok', 'Consent signed and saved.');
   });
-  const createVault = () => run('vault', async () => { await api('/api/vault', { method: 'POST' }); await refresh(); say('ok', 'Vault created.'); });
+  const [vaultKey, setVaultKey] = useState<string | null>(null);
+  const [keyCopied, setKeyCopied] = useState(false);
+  const createVault = () => run('vault', async () => {
+    const r = await api<{ created?: boolean; privateKey?: string }>('/api/vault', { method: 'POST' });
+    await refresh();
+    if (r.privateKey) { setVaultKey(r.privateKey); say('ok', 'Vault created. Copy the private key below. You can open it again any time from this page.'); }
+    else say('ok', 'Vault already exists. Use “Show vault private key” to copy it.');
+  });
+  const revealKey = () => run('key', async () => {
+    const r = await api<{ privateKey: string }>('/api/vault/key');
+    setVaultKey(r.privateKey);
+  });
   const panic = () => run('panic', async () => { await api('/api/panic', { method: 'POST' }); await refresh(); say('ok', 'Paused. Closing all open trades.'); });
 
   /* ───── activity ───── */
@@ -165,8 +176,16 @@ export default function RobotTab({ me, refresh, run, busy, say, sign, openSheet 
             <p className="hint">Anyone can check these on the public Solana explorer, without trusting this app. Paper trades never appear here.</p>
             <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
               <a className="btn btn-gold sm" href={`https://solscan.io/account/${me.vault.address}`} target="_blank" rel="noreferrer">Open my vault on Solscan</a>
+              <button className="btn btn-ghost sm" disabled={!!busy} onClick={revealKey}>{busy === 'key' ? 'Opening…' : 'Show vault private key'}</button>
               <span className="mono">{short(me.vault.address)} · {sol(me.vault.balanceSol, 4)} SOL now</span>
             </div>
+            {vaultKey && (
+              <div className="addr" style={{ marginTop: 10 }}>
+                <span className="mono" style={{ flex: 1, wordBreak: 'break-all' }}>{vaultKey}</span>
+                <button className="btn btn-gold sm" onClick={() => { navigator.clipboard?.writeText(vaultKey); setKeyCopied(true); setTimeout(() => setKeyCopied(false), 1500); }}>{keyCopied ? 'Copied' : 'Copy key'}</button>
+              </div>
+            )}
+            {vaultKey && <p className="hint warn">This is the Solana private key for this vault. Anyone with it can move the funds. Copy it whenever you need it. Do not share it.</p>}
             {(() => {
               const liveOpenList: any[] = trades?.live.open || [];
               const liveDone = (trades?.trades || []).filter((t: any) => !t.paper).slice(0, 6);

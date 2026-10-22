@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
-import Chart from './Chart';
+import TvChart from './TvChart';
 import * as charting from '@/lib/charting';
 import { useLiveTokens, getTape, LIST_SIZE, curveProgress, getLocalBars, getLocalTrades, recordTrade, STREAM, type Tok, type FeedStatus } from '@/lib/liveTokens';
 import type { TokenView } from '@/lib/dex';
@@ -26,7 +26,7 @@ function view(t: Tok, solUsd: number | null) {
  * Small picture. First choice is the thumbnail our robot saved (instant, no gateways); otherwise the shrunk link through our
  * server. A picture that fails is retried a few times with growing pauses, because IPFS gateways are slow, not gone.
  */
-const thumb = (u: string | null, w = 64) => (u && /^https:\/\//.test(u) ? `/api/img?w=${w}&u=${encodeURIComponent(u)}` : null);
+const thumb = (u: string | null, w = 48) => (u && /^https:\/\//.test(u) ? `/api/img?w=${w}&u=${encodeURIComponent(u)}` : null);
 const RETRY = [3000, 9000, 25000, 60000, 150000];
 function Avatar({ t, big, huge }: { t: { mint?: string; thumb?: boolean; image: string | null; symbol: string | null; name: string | null }; big?: boolean; huge?: boolean }) {
   const [attempt, setAttempt] = useState(0); // how many times the picture failed so far
@@ -38,12 +38,13 @@ function Avatar({ t, big, huge }: { t: { mint?: string; thumb?: boolean; image: 
     return () => clearTimeout(id);
   }, [failed, attempt]);
   const own = t.mint && t.thumb ? `/api/thumb?mint=${t.mint}${attempt ? `&r=${attempt}` : ''}` : null;
-  const link = thumb(t.image, huge ? 256 : big ? 128 : 64);
+  const link = thumb(t.image, huge ? 96 : big ? 64 : 48);
   const src = own || (link ? `${link}${attempt ? `&r=${attempt}` : ''}` : null);
+  const px = huge ? 72 : big ? 48 : 36;
   return (
     <div className={`avatar ${huge ? 'huge' : big ? 'big' : ''}`} aria-hidden>
       <span>{(t.symbol || t.name || '?').slice(0, 2).toUpperCase()}</span>
-      {src && !failed && attempt <= RETRY.length && <img key={src} src={src} alt="" width={huge ? 108 : big ? 58 : 36} height={huge ? 108 : big ? 58 : 36} loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => { setAttempt((n) => n + 1); setFailed(true); }} />}
+      {src && !failed && attempt <= RETRY.length && <img key={src} src={src} alt="" width={px} height={px} loading="eager" decoding="async" fetchPriority="high" referrerPolicy="no-referrer" onError={() => { setAttempt((n) => n + 1); setFailed(true); }} />}
     </div>
   );
 }
@@ -387,7 +388,6 @@ function TokenSheet({ mint, seed, solUsd, me, onSaved, goRobot, onClose }: { min
     return out;
   }, [mint, ch, n, older]); // eslint-disable-line react-hooks/exhaustive-deps
   const recent = trades.slice(0, 40); const bs = recent.filter((x) => x.side === 'buy').reduce((a, x) => a + x.sol, 0), ss = recent.filter((x) => x.side === 'sell').reduce((a, x) => a + x.sol, 0);
-  const replay = useMemo(() => (ch?.trades || []).slice(-40).reverse().map((x: any[]) => ({ side: x[1], sol: Number(x[2]) || 0, mcapSol: Number(x[3]) || 0, t: Number(x[0]) })), [ch?.trades?.length]); // eslint-disable-line react-hooks/exhaustive-deps
   // Tokens we have no recorded candles for (older than the robot's watch list) get plain market numbers from our server instead.
   useEffect(() => {
     if (!loaded || ch) return;
@@ -450,8 +450,7 @@ function TokenSheet({ mint, seed, solUsd, me, onSaved, goRobot, onClose }: { min
           <div className="cell"><span>Change 1h</span><b className={tv.change.h1 >= 0 ? 'up' : 'dn'}>{tv.change.h1.toFixed(1)}%</b></div>
         </div>
       ) : null}
-      {bars.length > 0 ? <Chart mint={mint} tiers={tiers} solUsd={solUsd} replay={replay} />
-        : <div className="coladd">{!loaded ? 'Loading chart…' : err || 'Listening for trades on this token. The chart starts the moment the next trade happens, and keeps building while you watch.'}</div>}
+      <TvChart mint={mint} bars={bars} trades={trades} solUsd={solUsd} />
       {bars.length > 0 && bars.length < 12 && <p className="hint">Only {bars.length} candle{bars.length === 1 ? '' : 's'} so far. Our charts are built from live trades, so a token we have just started watching has no earlier history.</p>}
       <div className="hist" aria-label="Trade history">
         <div className="histhead"><b>Trades by everyone</b><span className="mono">{trades.length ? `${recent.filter((x) => x.side === 'buy').length} buys · ${recent.filter((x) => x.side === 'sell').length} sells (last ${recent.length})` : 'waiting for the first trade'}</span></div>
@@ -518,9 +517,9 @@ export default function TokensTab({ me, onSaved, goRobot }: { me: Me | null; onS
       </div>
       <LiveTape find={feed.find} solUsd={feed.solUsd} onOpen={(m) => setOpen(m)} />
       <div className="cols">
-        <Column title="New" hint={`latest ${LIST_SIZE} launches`} items={L.new} solUsd={feed.solUsd} now={now} onOpen={setOpen} on={sub === 'new'} empty="Waiting for the next launch…" />
-        <Column title="Final stretch" hint="past half way to migrating" items={L.stretch} solUsd={feed.solUsd} now={now} onOpen={setOpen} on={sub === 'stretch'} empty={feed.topProgress != null ? `Nothing past half way up the curve yet. The robot is watching every launch; the closest coin is at ${Math.round(feed.topProgress * 100)}%. Coins appear here the moment they pass 50%.` : "Coins past half way up the curve show up here as the robot watches them climb."} />
-        <Column title="Migrated" hint="just graduated" items={L.migrated} solUsd={feed.solUsd} now={now} onOpen={setOpen} on={sub === 'migrated'} empty="Waiting for the next migration…" />
+        <Column title="New" hint={`latest ${LIST_SIZE} from the server`} items={L.new} solUsd={feed.solUsd} now={now} onOpen={setOpen} on={sub === 'new'} empty={feed.boardReady ? 'No launches on the server in this window yet.' : 'Loading tokens from the server…'} />
+        <Column title="Final stretch" hint="past half way to migrating" items={L.stretch} solUsd={feed.solUsd} now={now} onOpen={setOpen} on={sub === 'stretch'} empty={feed.boardReady ? (feed.topProgress != null ? `Nothing past half way yet. Closest is ${Math.round(feed.topProgress * 100)}%.` : 'No coins past half way on the server yet.') : 'Loading tokens from the server…'} />
+        <Column title="Migrated" hint="just graduated" items={L.migrated} solUsd={feed.solUsd} now={now} onOpen={setOpen} on={sub === 'migrated'} empty={feed.boardReady ? 'No recent migrations on the server yet.' : 'Loading tokens from the server…'} />
       </div>
       {open && <TokenSheet mint={open} seed={feed.find(open)} solUsd={feed.solUsd} me={me} onSaved={onSaved} goRobot={goRobot} onClose={() => setOpen(null)} />}
     </>
