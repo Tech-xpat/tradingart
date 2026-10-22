@@ -350,20 +350,13 @@ function TokenSheet({ mint, seed, solUsd, me, onSaved, goRobot, onClose }: { min
   }, [loaded, mint]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     let stop = false;
-    (async () => {
-      let before = '';
-      const acc: Tr[] = [];
-      for (let i = 0; i < 12 && !stop; i++) {
-        try {
-          const r = await api<{ trades: { sig: string; t: number; side: 'buy' | 'sell'; sol: number; mcapSol: number; who: string }[]; next: string | null }>(`/api/history?mint=${mint}${before ? `&before=${before}` : ''}`);
-          for (const x of r.trades || []) acc.push({ t: x.t, side: x.side, sol: x.sol, mcapSol: x.mcapSol, who: x.who, sig: x.sig?.slice(0, 10) });
-          if (!r.next) { if (!stop) setCursor(null); break; }
-          before = r.next;
-          if (!stop) setCursor(r.next);
-        } catch { break; }
-      }
-      if (!stop && acc.length) setOlder(acc);
-    })();
+    api<{ trades: { sig: string; t: number; side: 'buy' | 'sell'; sol: number; mcapSol: number; who: string }[]; next: string | null }>(`/api/history?mint=${mint}&full=1`)
+      .then((r) => {
+        if (stop) return;
+        setOlder((r.trades || []).map((x) => ({ t: x.t, side: x.side, sol: x.sol, mcapSol: x.mcapSol, who: x.who, sig: x.sig?.slice(0, 10) })));
+        setCursor(r.next);
+      })
+      .catch(() => {});
     return () => { stop = true; };
   }, [mint]);
   const loadOlder = async () => {
@@ -471,7 +464,7 @@ function TokenSheet({ mint, seed, solUsd, me, onSaved, goRobot, onClose }: { min
       <TvChart mint={mint} bars={bars} trades={trades} solUsd={solUsd} />
       <div className="row" style={{ margin: '4px 0 8px' }}>
         <a className="btn btn-ghost sm" href={`https://dexscreener.com/solana/${mint}`} target="_blank" rel="noreferrer">Open on DexScreener</a>
-        <span className="hint">TradingView candles from every trade. Green arrow = buy, red arrow = sell. History is loaded from the chain, then the live feed keeps ticking.</span>
+        <span className="hint">Market-cap candles from the first swap to now. The live candle grows as trades land. Scroll left for the start of the coin.</span>
       </div>
       <div className="hist" aria-label="Trade history">
         <div className="histhead"><b>Trades by everyone</b><span className="mono">{trades.length ? `${recent.filter((x) => x.side === 'buy').length} buys · ${recent.filter((x) => x.side === 'sell').length} sells (last ${recent.length})` : 'waiting for the first trade'}</span></div>
