@@ -348,6 +348,24 @@ function TokenSheet({ mint, seed, solUsd, me, onSaved, goRobot, onClose }: { min
     fetch(`/api/backfill?mint=${mint}`, { method: 'POST' }).then((r) => r.json()).then((j) => { if (!stop && j && j.ok && j.count) { setFilled((x) => x + 1); api<{ chart: ChartRow | null }>(`/api/chart?mint=${mint}`).then((r) => { if (!stop) setCh(r.chart); }, () => {}); } }).catch(() => {});
     return () => { stop = true; };
   }, [loaded, mint]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    let stop = false;
+    (async () => {
+      let before = '';
+      const acc: Tr[] = [];
+      for (let i = 0; i < 6 && !stop; i++) {
+        try {
+          const r = await api<{ trades: { sig: string; t: number; side: 'buy' | 'sell'; sol: number; mcapSol: number; who: string }[]; next: string | null }>(`/api/history?mint=${mint}${before ? `&before=${before}` : ''}`);
+          for (const x of r.trades || []) acc.push({ t: x.t, side: x.side, sol: x.sol, mcapSol: x.mcapSol, who: x.who, sig: x.sig?.slice(0, 10) });
+          if (!r.next) { if (!stop) setCursor(null); break; }
+          before = r.next;
+          if (!stop) setCursor(r.next);
+        } catch { break; }
+      }
+      if (!stop && acc.length) setOlder(acc);
+    })();
+    return () => { stop = true; };
+  }, [mint]);
   const loadOlder = async () => {
     setLoadingOld(true); setOldErr(null);
     try {
@@ -372,7 +390,7 @@ function TokenSheet({ mint, seed, solUsd, me, onSaved, goRobot, onClose }: { min
       } catch { retry = setTimeout(open, 4000); }
     };
     open();
-    const id = setInterval(() => { if (!closed) setN((x) => x + 1); }, 1000);
+    const id = setInterval(() => { if (!closed) setN((x) => x + 1); }, 250);
     return () => { closed = true; if (retry) clearTimeout(retry); clearInterval(id); try { s?.close(); } catch { /* ignore */ } };
   }, [mint]);
   const tiers = useMemo(() => {
@@ -384,7 +402,7 @@ function TokenSheet({ mint, seed, solUsd, me, onSaved, goRobot, onClose }: { min
     const srv: Tr[] = (ch?.trades || []).map((x: any[]) => ({ t: Number(x[0]), side: x[1] === 's' ? 'sell' : 'buy', sol: Number(x[2]) || 0, mcapSol: Number(x[3]) || 0, who: x[4] || undefined, sig: x[5] || undefined }));
     const loc: Tr[] = getLocalTrades(mint).map((x) => ({ t: x.t, side: x.side, sol: x.sol, mcapSol: x.mcapSol, who: x.who, sig: x.sig }));
     const seen = new Set<string>(); const out: Tr[] = [];
-    for (const x of [...loc, ...srv, ...older].sort((a, b) => b.t - a.t)) { const k = x.sig ? x.sig : `${Math.round(x.t / 1000)}:${x.sol}:${x.side}`; if (seen.has(k)) continue; seen.add(k); out.push(x); if (out.length >= 400) break; }
+    for (const x of [...loc, ...srv, ...older].sort((a, b) => b.t - a.t)) { const k = x.sig ? x.sig : `${Math.round(x.t / 1000)}:${x.sol}:${x.side}`; if (seen.has(k)) continue; seen.add(k); out.push(x); if (out.length >= 1200) break; }
     return out;
   }, [mint, ch, n, older]); // eslint-disable-line react-hooks/exhaustive-deps
   const recent = trades.slice(0, 40); const bs = recent.filter((x) => x.side === 'buy').reduce((a, x) => a + x.sol, 0), ss = recent.filter((x) => x.side === 'sell').reduce((a, x) => a + x.sol, 0);
@@ -450,8 +468,8 @@ function TokenSheet({ mint, seed, solUsd, me, onSaved, goRobot, onClose }: { min
           <div className="cell"><span>Change 1h</span><b className={tv.change.h1 >= 0 ? 'up' : 'dn'}>{tv.change.h1.toFixed(1)}%</b></div>
         </div>
       ) : null}
-      <TvChart mint={mint} bars={bars} trades={trades} solUsd={solUsd} />
-      {bars.length > 0 && bars.length < 12 && <p className="hint">Only {bars.length} candle{bars.length === 1 ? '' : 's'} so far. Our charts are built from live trades, so a token we have just started watching has no earlier history.</p>}
+      <TvChart mint={mint} trades={trades} solUsd={solUsd} />
+      <p className="hint">Every dot is one trade. Green is a buy, red is a sell. The line moves on every tick the market prints. Scroll to zoom, drag to look back.</p>
       <div className="hist" aria-label="Trade history">
         <div className="histhead"><b>Trades by everyone</b><span className="mono">{trades.length ? `${recent.filter((x) => x.side === 'buy').length} buys · ${recent.filter((x) => x.side === 'sell').length} sells (last ${recent.length})` : 'waiting for the first trade'}</span></div>
         <div className="pressure" title="Share of recent SOL that was buying"><i style={{ width: `${bs + ss ? Math.round((bs / (bs + ss)) * 100) : 50}%` }} /></div>
@@ -517,7 +535,7 @@ export default function TokensTab({ me, onSaved, goRobot }: { me: Me | null; onS
       </div>
       <LiveTape find={feed.find} solUsd={feed.solUsd} onOpen={(m) => setOpen(m)} />
       <div className="cols">
-        <Column title="New" hint={`latest ${LIST_SIZE} from the server`} items={L.new} solUsd={feed.solUsd} now={now} onOpen={setOpen} on={sub === 'new'} empty={feed.boardReady ? 'No launches on the server in this window yet.' : 'Loading tokens from the server…'} />
+        <Column title="New" hint={`latest ${LIST_SIZE} launches`} items={L.new} solUsd={feed.solUsd} now={now} onOpen={setOpen} on={sub === 'new'} empty="Waiting for the next launch…" />
         <Column title="Final stretch" hint="past half way to migrating" items={L.stretch} solUsd={feed.solUsd} now={now} onOpen={setOpen} on={sub === 'stretch'} empty={feed.boardReady ? (feed.topProgress != null ? `Nothing past half way yet. Closest is ${Math.round(feed.topProgress * 100)}%.` : 'No coins past half way on the server yet.') : 'Loading tokens from the server…'} />
         <Column title="Migrated" hint="just graduated" items={L.migrated} solUsd={feed.solUsd} now={now} onOpen={setOpen} on={sub === 'migrated'} empty={feed.boardReady ? 'No recent migrations on the server yet.' : 'Loading tokens from the server…'} />
       </div>
