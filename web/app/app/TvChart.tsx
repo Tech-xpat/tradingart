@@ -114,8 +114,14 @@ export default function TvChart({ mint, bars = [], trades, solUsd, height = 480 
         const c = candles.current.get(kk)!;
         return { time: kk, value: vols.current.get(kk) || 0, color: c.close >= c.open ? 'rgba(34,197,94,.45)' : 'rgba(239,68,68,.45)' };
       }));
-      chartRef.current?.timeScale().fitContent();
-      chartRef.current?.timeScale().scrollToRealTime?.();
+      // Keep a readable zoom on the recent candles. Older history is there; scroll left for it.
+      const n = keys.length;
+      if (n > 0) {
+        const visible = Math.min(n, 120);
+        chartRef.current?.timeScale().setVisibleLogicalRange?.({ from: n - visible, to: n + 4 });
+      } else {
+        chartRef.current?.timeScale().fitContent();
+      }
     }
     const last = keys.length ? candles.current.get(keys[keys.length - 1])! : null;
     setLive(last);
