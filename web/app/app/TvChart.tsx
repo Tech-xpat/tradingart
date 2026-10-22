@@ -31,7 +31,7 @@ function fmtMcap(n: number): string {
  * Each trade lands in a timeframe bucket. Open is the previous close.
  * Live trades call series.update() so the candle body and wick move on every fill.
  */
-export default function TvChart({ bars = [], trades, solUsd, height = 480 }: { mint: string; bars?: Bar[]; trades: Tr[]; solUsd: number | null; height?: number }) {
+export default function TvChart({ mint, bars = [], trades, solUsd, height = 480 }: { mint: string; bars?: Bar[]; trades: Tr[]; solUsd: number | null; height?: number }) {
   const box = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);
   const csRef = useRef<any>(null);
@@ -234,6 +234,43 @@ export default function TvChart({ bars = [], trades, solUsd, height = 480 }: { m
     setVol([...vols.current.values()].reduce((a, x) => a + x, 0));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trades, ready]);
+
+  // Live stream, same path as the demo: each trade calls series.update() immediately.
+  useEffect(() => {
+    if (!ready || !mint) return;
+    let ws: WebSocket | null = null, closed = false, retry: ReturnType<typeof setTimeout> | null = null;
+    const open = () => {
+      if (closed) return;
+      try {
+        ws = new WebSocket('wss://pumpportal.fun/api/data');
+        ws.onopen = () => { try { ws!.send(JSON.stringify({ method: 'subscribeTokenTrade', keys: [mint] })); } catch { /* ignore */ } };
+        ws.onmessage = (e) => {
+          try {
+            const m = JSON.parse(String(e.data));
+            if (!m || m.mint !== mint) return;
+            const tx = m.txType;
+            if (tx !== 'buy' && tx !== 'sell' && tx !== 'create') return;
+            let p = Number(m.marketCapSol);
+            if (!(p > 0)) { const sol = Number(m.solAmount), tok = Number(m.tokenAmount); p = sol > 0 && tok > 0 ? (sol / tok) * 1e9 : NaN; }
+            if (!(p > 0)) return;
+            const sec = Math.floor(Date.now() / 1000);
+            const price = p * kRef.current;
+            const size = Number(m.solAmount) || 0;
+            const key = m.signature || `live:${sec}:${size}:${tx}`;
+            if (seen.current.has(key)) return;
+            seen.current.add(key);
+            const c = applyTrade(sec, price, size, true);
+            if (c) setLive(c);
+            setVol([...vols.current.values()].reduce((a, x) => a + x, 0));
+          } catch { /* ignore */ }
+        };
+        ws.onclose = () => { if (!closed) retry = setTimeout(open, 1500); };
+        ws.onerror = () => { try { ws?.close(); } catch { /* ignore */ } };
+      } catch { retry = setTimeout(open, 3000); }
+    };
+    open();
+    return () => { closed = true; if (retry) clearTimeout(retry); try { ws?.close(); } catch { /* ignore */ } };
+  }, [ready, mint]);
 
   const shown = hover || live;
   const up = shown ? shown.close >= shown.open : true;
