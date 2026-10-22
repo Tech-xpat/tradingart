@@ -353,7 +353,7 @@ function TokenSheet({ mint, seed, solUsd, me, onSaved, goRobot, onClose }: { min
     (async () => {
       let before = '';
       const acc: Tr[] = [];
-      for (let i = 0; i < 6 && !stop; i++) {
+      for (let i = 0; i < 12 && !stop; i++) {
         try {
           const r = await api<{ trades: { sig: string; t: number; side: 'buy' | 'sell'; sol: number; mcapSol: number; who: string }[]; next: string | null }>(`/api/history?mint=${mint}${before ? `&before=${before}` : ''}`);
           for (const x of r.trades || []) acc.push({ t: x.t, side: x.side, sol: x.sol, mcapSol: x.mcapSol, who: x.who, sig: x.sig?.slice(0, 10) });
@@ -405,7 +405,7 @@ function TokenSheet({ mint, seed, solUsd, me, onSaved, goRobot, onClose }: { min
     for (const x of [...loc, ...srv, ...older].sort((a, b) => b.t - a.t)) { const k = x.sig ? x.sig : `${Math.round(x.t / 1000)}:${x.sol}:${x.side}`; if (seen.has(k)) continue; seen.add(k); out.push(x); if (out.length >= 1200) break; }
     return out;
   }, [mint, ch, n, older]); // eslint-disable-line react-hooks/exhaustive-deps
-  const recent = trades.slice(0, 40); const bs = recent.filter((x) => x.side === 'buy').reduce((a, x) => a + x.sol, 0), ss = recent.filter((x) => x.side === 'sell').reduce((a, x) => a + x.sol, 0);
+  const recent = trades.slice(0, 120); const bs = recent.filter((x) => x.side === 'buy').reduce((a, x) => a + x.sol, 0), ss = recent.filter((x) => x.side === 'sell').reduce((a, x) => a + x.sol, 0);
   // Tokens we have no recorded candles for (older than the robot's watch list) get plain market numbers from our server instead.
   useEffect(() => {
     if (!loaded || ch) return;
@@ -468,8 +468,11 @@ function TokenSheet({ mint, seed, solUsd, me, onSaved, goRobot, onClose }: { min
           <div className="cell"><span>Change 1h</span><b className={tv.change.h1 >= 0 ? 'up' : 'dn'}>{tv.change.h1.toFixed(1)}%</b></div>
         </div>
       ) : null}
-      <TvChart mint={mint} trades={trades} solUsd={solUsd} />
-      <p className="hint">Every dot is one trade. Green is a buy, red is a sell. The line moves on every tick the market prints. Scroll to zoom, drag to look back.</p>
+      <TvChart mint={mint} bars={bars} trades={trades} solUsd={solUsd} />
+      <div className="row" style={{ margin: '4px 0 8px' }}>
+        <a className="btn btn-ghost sm" href={`https://dexscreener.com/solana/${mint}`} target="_blank" rel="noreferrer">Open on DexScreener</a>
+        <span className="hint">TradingView candles from every trade. Green arrow = buy, red arrow = sell. History is loaded from the chain, then the live feed keeps ticking.</span>
+      </div>
       <div className="hist" aria-label="Trade history">
         <div className="histhead"><b>Trades by everyone</b><span className="mono">{trades.length ? `${recent.filter((x) => x.side === 'buy').length} buys · ${recent.filter((x) => x.side === 'sell').length} sells (last ${recent.length})` : 'waiting for the first trade'}</span></div>
         <div className="pressure" title="Share of recent SOL that was buying"><i style={{ width: `${bs + ss ? Math.round((bs / (bs + ss)) * 100) : 50}%` }} /></div>
@@ -482,7 +485,7 @@ function TokenSheet({ mint, seed, solUsd, me, onSaved, goRobot, onClose }: { min
         {oldErr && <span className="hint warn">{oldErr}</span>}
         {filled > 0 && <span className="hint">Chart rebuilt from the coin's on-chain trades.</span>}
       </div>
-      <p className="hint">Candles are built by our own robot from live trades. New tokens are extremely risky; a token shown here is not a recommendation.</p>
+      <p className="hint">Chart is TradingView. Every buy and sell is marked. New tokens are extremely risky; a token shown here is not a recommendation.</p>
     </Sheet>
   );
 }
