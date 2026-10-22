@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
+import { createChart, CandlestickSeries, HistogramSeries, ColorType, LineStyle } from 'lightweight-charts';
 
 type Bar = number[];
 type Tr = { t: number; side: 'buy' | 'sell'; sol: number; mcapSol: number; who?: string };
@@ -14,49 +15,40 @@ const TF = [
   { s: 900, l: '15m' },
   { s: 3600, l: '1h' },
 ];
-const TV = 'https://unpkg.com/lightweight-charts@5.0.8/dist/lightweight-charts.standalone.production.js';
-
-declare global { interface Window { LightweightCharts?: any; } }
-
-function loadTv(): Promise<any> {
-  if (typeof window === 'undefined') return Promise.reject(new Error('no window'));
-  if (window.LightweightCharts) return Promise.resolve(window.LightweightCharts);
-  return new Promise((resolve, reject) => {
-    const existing = document.querySelector('script[data-lwc]') as HTMLScriptElement | null;
-    if (existing) {
-      existing.addEventListener('load', () => resolve(window.LightweightCharts));
-      existing.addEventListener('error', () => reject(new Error('chart failed')));
-      return;
-    }
-    const s = document.createElement('script');
-    s.src = TV; s.async = true; s.dataset.lwc = '1';
-    s.onload = () => resolve(window.LightweightCharts);
-    s.onerror = () => reject(new Error('chart failed'));
-    document.head.appendChild(s);
-  });
-}
 
 const msOf = (t: number) => (t > 1e12 ? t : t * 1000);
 
 type Candle = { time: number; open: number; high: number; low: number; close: number; volume: number };
 
+function fmtMcap(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return '–';
+  if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+  if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+  return n.toFixed(2);
+}
+
+/** Build candles from recorded bars (dense history) then overlay live trades so the last candle ticks. */
 function buildCandles(trades: Tr[], bars: Bar[], tf: number, k: number): Candle[] {
-  const rows: { sec: number; p: number; sol: number }[] = [];
+  const points: { sec: number; p: number; sol: number }[] = [];
+
+  // Bars first — the worker has been recording these, so the chart is dense like DexScreener
+  for (const b of bars) {
+    const sec = Math.floor(Number(b[0]));
+    const close = Number(b[4]) * k;
+    if (sec > 0 && close > 0) points.push({ sec, p: close, sol: Number(b[5]) || 0 });
+  }
+
+  // Live trades overlay the recent end so the current candle moves with every fill
   for (const t of trades) {
     const p = (t.mcapSol || 0) * k;
     const sec = Math.floor(msOf(t.t) / 1000);
-    if (sec > 0 && p > 0) rows.push({ sec, p, sol: t.sol || 0 });
+    if (sec > 0 && p > 0) points.push({ sec, p, sol: t.sol || 0 });
   }
-  if (!rows.length) {
-    for (const b of bars) {
-      const sec = Math.floor(Number(b[0]));
-      const p = Number(b[4]) * k;
-      if (sec > 0 && p > 0) rows.push({ sec, p, sol: Number(b[5]) || 0 });
-    }
-  }
-  rows.sort((a, b) => a.sec - b.sec);
+
+  points.sort((a, b) => a.sec - b.sec);
   const out: Candle[] = [];
-  for (const r of rows) {
+  for (const r of points) {
     const time = Math.floor(r.sec / tf) * tf;
     const last = out[out.length - 1];
     if (last && last.time === time) {
@@ -72,47 +64,7 @@ function buildCandles(trades: Tr[], bars: Bar[], tf: number, k: number): Candle[
   return out;
 }
 
-function fmtMcap(n: number): string {
-  if (!Number.isFinite(n) || n <= 0) return '–';
-  if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
-  if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
-  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
-  return n.toFixed(2);
-}
-
-function addSeries(LWC: any, chart: any, kind: 'candle' | 'vol') {
-  const priceFormat = {
-    type: 'custom' as const,
-    minMove: 0.01,
-    formatter: (p: number) => fmtMcap(p),
-  };
-  if (kind === 'candle') {
-    const opts = {
-      upColor: '#26a69a',
-      downColor: '#ef5350',
-      borderUpColor: '#26a69a',
-      borderDownColor: '#ef5350',
-      wickUpColor: '#26a69a',
-      wickDownColor: '#ef5350',
-      borderVisible: false,
-      priceFormat,
-      lastValueVisible: true,
-      priceLineVisible: true,
-      priceLineStyle: 2,
-      priceLineWidth: 1,
-    };
-    if (LWC.CandlestickSeries) return chart.addSeries(LWC.CandlestickSeries, opts);
-    return chart.addCandlestickSeries(opts);
-  }
-  const vopts = {
-    priceFormat: { type: 'volume' as const },
-    priceScaleId: '',
-  };
-  if (LWC.HistogramSeries) return chart.addSeries(LWC.HistogramSeries, vopts);
-  return chart.addHistogramSeries(vopts);
-}
-
-/** TradingView Lightweight Charts. Market-cap candles that tick on every trade. */
+/** TradingView Lightweight Charts, styled to match the DexScreener screenshot. */
 export default function TvChart({ bars = [], trades, solUsd, height = 480 }: { mint: string; bars?: Bar[]; trades: Tr[]; solUsd: number | null; height?: number }) {
   const box = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);
@@ -120,7 +72,6 @@ export default function TvChart({ bars = [], trades, solUsd, height = 480 }: { m
   const volRef = useRef<any>(null);
   const painted = useRef('');
   const follow = useRef(true);
-  const lastTradeKey = useRef('');
   const [tf, setTf] = useState(5);
   const [err, setErr] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
@@ -128,14 +79,14 @@ export default function TvChart({ bars = [], trades, solUsd, height = 480 }: { m
   const k = solUsd && solUsd > 0 ? solUsd : 1;
 
   useEffect(() => {
-    let dead = false;
-    loadTv().then((LWC) => {
-      if (dead || !box.current) return;
-      const chart = LWC.createChart(box.current, {
+    if (!box.current) return;
+    let chart: any;
+    try {
+      chart = createChart(box.current, {
         width: box.current.clientWidth,
         height,
         layout: {
-          background: { type: 'solid', color: '#0e1621' },
+          background: { type: ColorType.Solid, color: '#0e1621' },
           textColor: '#b2b5be',
           fontSize: 11,
           fontFamily: '-apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, sans-serif',
@@ -146,13 +97,12 @@ export default function TvChart({ bars = [], trades, solUsd, height = 480 }: { m
         },
         crosshair: {
           mode: 1,
-          vertLine: { color: '#758696', width: 1, style: 3, labelBackgroundColor: '#2a2e39' },
-          horzLine: { color: '#758696', width: 1, style: 3, labelBackgroundColor: '#2a2e39' },
+          vertLine: { color: '#758696', width: 1, style: LineStyle.Dashed, labelBackgroundColor: '#2a2e39' },
+          horzLine: { color: '#758696', width: 1, style: LineStyle.Dashed, labelBackgroundColor: '#2a2e39' },
         },
         rightPriceScale: {
           borderColor: '#2a2e39',
-          scaleMargins: { top: 0.06, bottom: 0.24 },
-          entireTextOnly: false,
+          scaleMargins: { top: 0.06, bottom: 0.22 },
         },
         timeScale: {
           borderColor: '#2a2e39',
@@ -162,34 +112,51 @@ export default function TvChart({ bars = [], trades, solUsd, height = 480 }: { m
           barSpacing: 7,
           minBarSpacing: 3,
         },
+        localization: {
+          priceFormatter: (p: number) => fmtMcap(p),
+        },
         handleScroll: true,
         handleScale: true,
       });
-      const candle = addSeries(LWC, chart, 'candle');
-      const vol = addSeries(LWC, chart, 'vol');
-      // Volume sits in the bottom ~18% like DexScreener
+
+      const candle = chart.addSeries(CandlestickSeries, {
+        upColor: '#26a69a',
+        downColor: '#ef5350',
+        borderUpColor: '#26a69a',
+        borderDownColor: '#ef5350',
+        wickUpColor: '#26a69a',
+        wickDownColor: '#ef5350',
+        borderVisible: false,
+        lastValueVisible: true,
+        priceLineVisible: true,
+        priceLineStyle: LineStyle.Dashed,
+        priceLineWidth: 1,
+        priceFormat: {
+          type: 'custom',
+          minMove: 0.01,
+          formatter: (p: number) => fmtMcap(p),
+        },
+      });
+
+      const vol = chart.addSeries(HistogramSeries, {
+        priceFormat: { type: 'volume' },
+        priceScaleId: '',
+      });
       vol.priceScale().applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
       candle.priceScale().applyOptions({ scaleMargins: { top: 0.06, bottom: 0.22 } });
 
       chart.subscribeCrosshairMove((param: any) => {
-        if (!param || !param.time || !candleRef.current) { setHover(null); return; }
-        const data = param.seriesData?.get?.(candleRef.current);
+        if (!param || !param.time) { setHover(null); return; }
+        const data = param.seriesData?.get?.(candle);
         if (data && typeof data.open === 'number') {
-          setHover({
-            time: param.time as number,
-            open: data.open,
-            high: data.high,
-            low: data.low,
-            close: data.close,
-            volume: 0,
-          });
+          setHover({ time: param.time as number, open: data.open, high: data.high, low: data.low, close: data.close, volume: 0 });
         } else setHover(null);
       });
 
       chart.timeScale().subscribeVisibleLogicalRangeChange((range: any) => {
         if (!range) return;
-        const barsInfo = candle.barsInLogicalRange?.(range);
-        follow.current = !barsInfo || (typeof barsInfo.barsAfter === 'number' && barsInfo.barsAfter < 3);
+        const info = candle.barsInLogicalRange?.(range);
+        follow.current = !info || (typeof info.barsAfter === 'number' && info.barsAfter < 3);
       });
 
       chartRef.current = chart;
@@ -201,12 +168,18 @@ export default function TvChart({ bars = [], trades, solUsd, height = 480 }: { m
       ro.observe(box.current);
       (chart as any)._ro = ro;
       setReady(true);
-    }).catch((e) => { if (!dead) setErr(e?.message || 'Chart failed to load'); });
+      setErr(null);
+    } catch (e: any) {
+      setErr(e?.message || 'Chart failed');
+    }
     return () => {
-      dead = true; setReady(false); painted.current = '';
-      try { chartRef.current?._ro?.disconnect(); } catch { /* ignore */ }
-      try { chartRef.current?.remove(); } catch { /* ignore */ }
-      chartRef.current = null; candleRef.current = null; volRef.current = null;
+      setReady(false);
+      painted.current = '';
+      try { (chart as any)?._ro?.disconnect(); } catch { /* ignore */ }
+      try { chart?.remove(); } catch { /* ignore */ }
+      chartRef.current = null;
+      candleRef.current = null;
+      volRef.current = null;
     };
   }, [height]);
 
@@ -218,9 +191,8 @@ export default function TvChart({ bars = [], trades, solUsd, height = 480 }: { m
     const candles = buildCandles(trades, bars, tf, k);
     if (!candles.length) return;
     const last = candles[candles.length - 1];
-    const key = `${tf}:${candles.length}:${last.time}:${last.close.toFixed(2)}`;
+    const key = `${tf}:${candles.length}:${last.time}:${last.close.toFixed(4)}`;
     const sameTf = painted.current.startsWith(`${tf}:`);
-
     const volColor = (c: Candle) => c.close >= c.open ? 'rgba(38,166,154,0.55)' : 'rgba(239,83,80,0.55)';
 
     if (!sameTf || !painted.current) {
@@ -231,8 +203,6 @@ export default function TvChart({ bars = [], trades, solUsd, height = 480 }: { m
       painted.current = key;
       return;
     }
-
-    // Live tick: update the current candle on every new trade
     candle.update({ time: last.time, open: last.open, high: last.high, low: last.low, close: last.close });
     vol.update({ time: last.time, value: last.volume, color: volColor(last) });
     if (follow.current) chart.timeScale().scrollToRealTime?.();
@@ -244,10 +214,9 @@ export default function TvChart({ bars = [], trades, solUsd, height = 480 }: { m
   const shown = hover || live;
   const up = shown ? shown.close >= shown.open : true;
   const change = shown && shown.open ? ((shown.close - shown.open) / shown.open) * 100 : 0;
-  const vol = live ? live.volume : 0;
-
-  const title = solUsd ? 'Market Cap · USD' : 'Market Cap · SOL';
   const chgAbs = shown ? Math.abs(shown.close - shown.open) : 0;
+  const vol = live ? live.volume : 0;
+  const title = solUsd ? 'Market Cap · USD' : 'Market Cap · SOL';
 
   return (
     <div className="tvwidget" aria-label="TradingView chart">
@@ -269,11 +238,10 @@ export default function TvChart({ bars = [], trades, solUsd, height = 480 }: { m
           ))}
         </div>
       </div>
-      <div ref={box} style={{ height, position: 'relative' }} />
-      {!trades.length && !bars.length && (
-        <div className="hint" style={{ padding: '0 10px 8px' }}>
-          {err || 'Loading every trade from the first swap. The live candle grows as new trades land.'}
-        </div>
+      <div ref={box} style={{ height }} />
+      {err && <div className="hint warn" style={{ padding: '0 10px 8px' }}>{err}</div>}
+      {!trades.length && !bars.length && !err && (
+        <div className="hint" style={{ padding: '0 10px 8px' }}>Loading every trade from the first swap. The live candle grows as new trades land.</div>
       )}
     </div>
   );
