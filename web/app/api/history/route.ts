@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
     const all: any[] = [];
     let cursor: string | null = before || null;
     let next: string | null = null;
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 30; i++) {
       const r = await fetchTrades(mint, { before: cursor || undefined, limit: 60 });
       all.push(...r.trades);
       next = r.next;

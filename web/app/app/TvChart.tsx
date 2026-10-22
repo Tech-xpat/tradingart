@@ -216,6 +216,12 @@ export default function TvChart({ bars = [], trades, solUsd, height = 480 }: { m
     }
     if (!fresh.length) return;
     fresh.sort((a, b) => msOf(a.t) - msOf(b.t));
+    // Older history arrived after the chart was already built. Rebuilding keeps candle opens correct.
+    const oldestKnown = lastKey();
+    if (oldestKnown > 0 && fresh.some((t) => Math.floor(msOf(t.t) / 1000) < oldestKnown)) {
+      rebuild(trades, bars);
+      return;
+    }
     let last: Candle | null = null;
     for (const t of fresh) {
       const key = t.sig || `t:${Math.floor(msOf(t.t) / 1000)}:${t.sol}:${t.side}`;
