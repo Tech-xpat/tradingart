@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createChart, CandlestickSeries, HistogramSeries, ColorType, LineStyle } from 'lightweight-charts';
 
 type Bar = number[];
-type Tr = { t: number; side: 'buy' | 'sell'; sol: number; mcapSol: number; who?: string };
+type Tr = { t: number; side: 'buy' | 'sell'; sol: number; mcapSol: number; who?: string; sig?: string };
 
 const TF = [
   { s: 1, l: '1s' },
@@ -12,13 +12,11 @@ const TF = [
   { s: 30, l: '30s' },
   { s: 60, l: '1m' },
   { s: 300, l: '5m' },
-  { s: 900, l: '15m' },
-  { s: 3600, l: '1h' },
 ];
 
 const msOf = (t: number) => (t > 1e12 ? t : t * 1000);
 
-type Candle = { time: number; open: number; high: number; low: number; close: number; volume: number };
+type Candle = { time: number; open: number; high: number; low: number; close: number };
 
 function fmtMcap(n: number): string {
   if (!Number.isFinite(n) || n <= 0) return '–';
@@ -28,55 +26,101 @@ function fmtMcap(n: number): string {
   return n.toFixed(2);
 }
 
-/** Build candles from recorded bars (dense history) then overlay live trades so the last candle ticks. */
-function buildCandles(trades: Tr[], bars: Bar[], tf: number, k: number): Candle[] {
-  const points: { sec: number; p: number; sol: number }[] = [];
-
-  // Bars first — the worker has been recording these, so the chart is dense like DexScreener
-  for (const b of bars) {
-    const sec = Math.floor(Number(b[0]));
-    const close = Number(b[4]) * k;
-    if (sec > 0 && close > 0) points.push({ sec, p: close, sol: Number(b[5]) || 0 });
-  }
-
-  // Live trades overlay the recent end so the current candle moves with every fill
-  for (const t of trades) {
-    const p = (t.mcapSol || 0) * k;
-    const sec = Math.floor(msOf(t.t) / 1000);
-    if (sec > 0 && p > 0) points.push({ sec, p, sol: t.sol || 0 });
-  }
-
-  points.sort((a, b) => a.sec - b.sec);
-  const out: Candle[] = [];
-  for (const r of points) {
-    const time = Math.floor(r.sec / tf) * tf;
-    const last = out[out.length - 1];
-    if (last && last.time === time) {
-      if (r.p > last.high) last.high = r.p;
-      if (r.p < last.low) last.low = r.p;
-      last.close = r.p;
-      last.volume += r.sol;
-    } else {
-      const open = last ? last.close : r.p;
-      out.push({ time, open, high: Math.max(open, r.p), low: Math.min(open, r.p), close: r.p, volume: r.sol });
-    }
-  }
-  return out;
-}
-
-/** TradingView Lightweight Charts, styled to match the DexScreener screenshot. */
+/**
+ * Same candle engine as the working demo.
+ * Each trade lands in a timeframe bucket. Open is the previous close.
+ * Live trades call series.update() so the candle body and wick move on every fill.
+ */
 export default function TvChart({ bars = [], trades, solUsd, height = 480 }: { mint: string; bars?: Bar[]; trades: Tr[]; solUsd: number | null; height?: number }) {
   const box = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);
-  const candleRef = useRef<any>(null);
-  const volRef = useRef<any>(null);
-  const painted = useRef('');
+  const csRef = useRef<any>(null);
+  const vsRef = useRef<any>(null);
+  const candles = useRef<Map<number, Candle>>(new Map());
+  const vols = useRef<Map<number, number>>(new Map());
+  const seen = useRef<Set<string>>(new Set());
   const follow = useRef(true);
   const [tf, setTf] = useState(5);
   const [err, setErr] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [hover, setHover] = useState<Candle | null>(null);
+  const [live, setLive] = useState<Candle | null>(null);
+  const [vol, setVol] = useState(0);
   const k = solUsd && solUsd > 0 ? solUsd : 1;
+  const tfRef = useRef(tf);
+  tfRef.current = tf;
+  const kRef = useRef(k);
+  kRef.current = k;
+
+  const bucket = (sec: number) => Math.floor(sec / tfRef.current) * tfRef.current;
+
+  function lastKey() {
+    let m = -1;
+    for (const x of candles.current.keys()) if (x > m) m = x;
+    return m;
+  }
+
+  /** Apply one trade. live=true calls series.update() so the candle ticks. */
+  function applyTrade(sec: number, price: number, size: number, liveFlag: boolean) {
+    const b = bucket(sec);
+    let c = candles.current.get(b);
+    if (!c) {
+      const prev = candles.current.size ? candles.current.get(lastKey())!.close : price;
+      c = { time: b, open: prev, high: Math.max(prev, price), low: Math.min(prev, price), close: price };
+      vols.current.set(b, 0);
+    } else {
+      c.high = Math.max(c.high, price);
+      c.low = Math.min(c.low, price);
+      c.close = price;
+    }
+    candles.current.set(b, c);
+    vols.current.set(b, (vols.current.get(b) || 0) + size);
+    if (liveFlag && csRef.current && vsRef.current) {
+      csRef.current.update(c);
+      vsRef.current.update({
+        time: b,
+        value: vols.current.get(b),
+        color: c.close >= c.open ? 'rgba(34,197,94,.45)' : 'rgba(239,68,68,.45)',
+      });
+      if (follow.current) chartRef.current?.timeScale().scrollToRealTime?.();
+    }
+    return c;
+  }
+
+  function rebuild(all: Tr[], barList: Bar[]) {
+    candles.current.clear();
+    vols.current.clear();
+    seen.current.clear();
+    const points: { sec: number; p: number; sol: number; key: string }[] = [];
+    for (const b of barList) {
+      const sec = Math.floor(Number(b[0]));
+      const p = Number(b[4]) * kRef.current;
+      if (sec > 0 && p > 0) points.push({ sec, p, sol: Number(b[5]) || 0, key: `b:${sec}` });
+    }
+    for (const t of all) {
+      const p = (t.mcapSol || 0) * kRef.current;
+      const sec = Math.floor(msOf(t.t) / 1000);
+      if (sec > 0 && p > 0) points.push({ sec, p, sol: t.sol || 0, key: t.sig || `t:${sec}:${t.sol}:${t.side}` });
+    }
+    points.sort((a, b) => a.sec - b.sec);
+    for (const r of points) {
+      applyTrade(r.sec, r.p, r.sol, false);
+      seen.current.add(r.key);
+    }
+    const keys = [...candles.current.keys()].sort((a, b) => a - b);
+    if (csRef.current && vsRef.current) {
+      csRef.current.setData(keys.map((kk) => candles.current.get(kk)));
+      vsRef.current.setData(keys.map((kk) => {
+        const c = candles.current.get(kk)!;
+        return { time: kk, value: vols.current.get(kk) || 0, color: c.close >= c.open ? 'rgba(34,197,94,.45)' : 'rgba(239,68,68,.45)' };
+      }));
+      chartRef.current?.timeScale().fitContent();
+      chartRef.current?.timeScale().scrollToRealTime?.();
+    }
+    const last = keys.length ? candles.current.get(keys[keys.length - 1])! : null;
+    setLive(last);
+    setVol([...vols.current.values()].reduce((a, x) => a + x, 0));
+  }
 
   useEffect(() => {
     if (!box.current) return;
@@ -86,82 +130,52 @@ export default function TvChart({ bars = [], trades, solUsd, height = 480 }: { m
         width: box.current.clientWidth,
         height,
         layout: {
-          background: { type: ColorType.Solid, color: '#0e1621' },
-          textColor: '#b2b5be',
+          background: { type: ColorType.Solid, color: '#0b0d10' },
+          textColor: '#7d8794',
           fontSize: 11,
-          fontFamily: '-apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, sans-serif',
         },
-        grid: {
-          vertLines: { color: '#1c2331' },
-          horzLines: { color: '#1c2331' },
-        },
-        crosshair: {
-          mode: 1,
-          vertLine: { color: '#758696', width: 1, style: LineStyle.Dashed, labelBackgroundColor: '#2a2e39' },
-          horzLine: { color: '#758696', width: 1, style: LineStyle.Dashed, labelBackgroundColor: '#2a2e39' },
-        },
-        rightPriceScale: {
-          borderColor: '#2a2e39',
-          scaleMargins: { top: 0.06, bottom: 0.22 },
-        },
-        timeScale: {
-          borderColor: '#2a2e39',
-          timeVisible: true,
-          secondsVisible: true,
-          rightOffset: 6,
-          barSpacing: 7,
-          minBarSpacing: 3,
-        },
-        localization: {
-          priceFormatter: (p: number) => fmtMcap(p),
-        },
+        grid: { vertLines: { color: '#12171d' }, horzLines: { color: '#12171d' } },
+        rightPriceScale: { borderColor: '#1e252d', scaleMargins: { top: 0.08, bottom: 0.25 } },
+        timeScale: { borderColor: '#1e252d', timeVisible: true, secondsVisible: true, rightOffset: 6, barSpacing: 8 },
+        crosshair: { mode: 0 },
+        localization: { priceFormatter: (v: number) => fmtMcap(v) },
         handleScroll: true,
         handleScale: true,
       });
-
-      const candle = chart.addSeries(CandlestickSeries, {
-        upColor: '#26a69a',
-        downColor: '#ef5350',
-        borderUpColor: '#26a69a',
-        borderDownColor: '#ef5350',
-        wickUpColor: '#26a69a',
-        wickDownColor: '#ef5350',
+      const cs = chart.addSeries(CandlestickSeries, {
+        upColor: '#22c55e',
+        downColor: '#ef4444',
+        borderUpColor: '#22c55e',
+        borderDownColor: '#ef4444',
+        wickUpColor: '#22c55e',
+        wickDownColor: '#ef4444',
         borderVisible: false,
         lastValueVisible: true,
         priceLineVisible: true,
         priceLineStyle: LineStyle.Dashed,
-        priceLineWidth: 1,
-        priceFormat: {
-          type: 'custom',
-          minMove: 0.01,
-          formatter: (p: number) => fmtMcap(p),
-        },
+        priceFormat: { type: 'custom', formatter: (v: number) => fmtMcap(v), minMove: 0.0000001 },
       });
-
-      const vol = chart.addSeries(HistogramSeries, {
+      const vs = chart.addSeries(HistogramSeries, {
         priceFormat: { type: 'volume' },
-        priceScaleId: '',
+        priceScaleId: 'vol',
+        lastValueVisible: false,
+        priceLineVisible: false,
       });
-      vol.priceScale().applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
-      candle.priceScale().applyOptions({ scaleMargins: { top: 0.06, bottom: 0.22 } });
+      chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
 
-      chart.subscribeCrosshairMove((param: any) => {
-        if (!param || !param.time) { setHover(null); return; }
-        const data = param.seriesData?.get?.(candle);
-        if (data && typeof data.open === 'number') {
-          setHover({ time: param.time as number, open: data.open, high: data.high, low: data.low, close: data.close, volume: 0 });
-        } else setHover(null);
+      chart.subscribeCrosshairMove((p: any) => {
+        const d = p && p.seriesData && p.seriesData.get(cs);
+        setHover(d && typeof d.open === 'number' ? { time: p.time, open: d.open, high: d.high, low: d.low, close: d.close } : null);
       });
-
       chart.timeScale().subscribeVisibleLogicalRangeChange((range: any) => {
         if (!range) return;
-        const info = candle.barsInLogicalRange?.(range);
+        const info = cs.barsInLogicalRange?.(range);
         follow.current = !info || (typeof info.barsAfter === 'number' && info.barsAfter < 3);
       });
 
       chartRef.current = chart;
-      candleRef.current = candle;
-      volRef.current = vol;
+      csRef.current = cs;
+      vsRef.current = vs;
       const ro = new ResizeObserver(() => {
         if (box.current && chartRef.current) chartRef.current.applyOptions({ width: box.current.clientWidth });
       });
@@ -174,57 +188,59 @@ export default function TvChart({ bars = [], trades, solUsd, height = 480 }: { m
     }
     return () => {
       setReady(false);
-      painted.current = '';
       try { (chart as any)?._ro?.disconnect(); } catch { /* ignore */ }
       try { chart?.remove(); } catch { /* ignore */ }
       chartRef.current = null;
-      candleRef.current = null;
-      volRef.current = null;
+      csRef.current = null;
+      vsRef.current = null;
     };
   }, [height]);
 
+  // Rebuild when timeframe or scale changes
   useEffect(() => {
-    const candle = candleRef.current;
-    const vol = volRef.current;
-    const chart = chartRef.current;
-    if (!candle || !vol || !chart) return;
-    const candles = buildCandles(trades, bars, tf, k);
-    if (!candles.length) return;
-    const last = candles[candles.length - 1];
-    const key = `${tf}:${candles.length}:${last.time}:${last.close.toFixed(4)}`;
-    const sameTf = painted.current.startsWith(`${tf}:`);
-    const volColor = (c: Candle) => c.close >= c.open ? 'rgba(38,166,154,0.55)' : 'rgba(239,83,80,0.55)';
+    if (!ready) return;
+    rebuild(trades, bars);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tf, k, ready]);
 
-    if (!sameTf || !painted.current) {
-      candle.setData(candles.map((c) => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close })));
-      vol.setData(candles.map((c) => ({ time: c.time, value: c.volume, color: volColor(c) })));
-      chart.timeScale().fitContent();
-      chart.timeScale().scrollToRealTime?.();
-      painted.current = key;
-      return;
+  // Tick: apply only the new trades, same as the demo's onTrade
+  useEffect(() => {
+    if (!ready || !csRef.current) return;
+    const fresh: Tr[] = [];
+    for (const t of trades) {
+      const key = t.sig || `t:${Math.floor(msOf(t.t) / 1000)}:${t.sol}:${t.side}`;
+      if (seen.current.has(key)) continue;
+      const p = (t.mcapSol || 0) * kRef.current;
+      const sec = Math.floor(msOf(t.t) / 1000);
+      if (sec > 0 && p > 0) fresh.push(t);
     }
-    candle.update({ time: last.time, open: last.open, high: last.high, low: last.low, close: last.close });
-    vol.update({ time: last.time, value: last.volume, color: volColor(last) });
-    if (follow.current) chart.timeScale().scrollToRealTime?.();
-    painted.current = key;
-  }, [bars, trades, tf, k, ready]);
+    if (!fresh.length) return;
+    fresh.sort((a, b) => msOf(a.t) - msOf(b.t));
+    let last: Candle | null = null;
+    for (const t of fresh) {
+      const key = t.sig || `t:${Math.floor(msOf(t.t) / 1000)}:${t.sol}:${t.side}`;
+      const p = (t.mcapSol || 0) * kRef.current;
+      const sec = Math.floor(msOf(t.t) / 1000);
+      last = applyTrade(sec, p, t.sol || 0, true);
+      seen.current.add(key);
+    }
+    if (last) setLive(last);
+    setVol([...vols.current.values()].reduce((a, x) => a + x, 0));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trades, ready]);
 
-  const candles = buildCandles(trades, bars, tf, k);
-  const live = candles.length ? candles[candles.length - 1] : null;
   const shown = hover || live;
   const up = shown ? shown.close >= shown.open : true;
   const change = shown && shown.open ? ((shown.close - shown.open) / shown.open) * 100 : 0;
   const chgAbs = shown ? Math.abs(shown.close - shown.open) : 0;
-  const vol = live ? live.volume : 0;
-  const title = solUsd ? 'Market Cap · USD' : 'Market Cap · SOL';
 
   return (
     <div className="tvwidget" aria-label="TradingView chart">
       <div className="tvhead">
         <div className="tvtitle">
-          <b>{title}</b>
+          <b>{solUsd ? 'Market Cap · USD' : 'Market Cap · SOL'}</b>
           {shown && (
-            <span className="ohlc" style={{ color: up ? '#26a69a' : '#ef5350' }}>
+            <span className="ohlc" style={{ color: up ? '#22c55e' : '#ef4444' }}>
               O{fmtMcap(shown.open)} H{fmtMcap(shown.high)} L{fmtMcap(shown.low)} C{fmtMcap(shown.close)} {fmtMcap(chgAbs)} ({change >= 0 ? '+' : ''}{change.toFixed(2)}%)
             </span>
           )}
@@ -241,7 +257,7 @@ export default function TvChart({ bars = [], trades, solUsd, height = 480 }: { m
       <div ref={box} style={{ height }} />
       {err && <div className="hint warn" style={{ padding: '0 10px 8px' }}>{err}</div>}
       {!trades.length && !bars.length && !err && (
-        <div className="hint" style={{ padding: '0 10px 8px' }}>Loading every trade from the first swap. The live candle grows as new trades land.</div>
+        <div className="hint" style={{ padding: '0 10px 8px' }}>Waiting for the first trade. The candle will move as each fill lands.</div>
       )}
     </div>
   );
