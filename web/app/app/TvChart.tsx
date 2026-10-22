@@ -72,27 +72,43 @@ function buildCandles(trades: Tr[], bars: Bar[], tf: number, k: number): Candle[
   return out;
 }
 
-function addSeries(LWC: any, chart: any, kind: 'candle' | 'vol') {
-  if (kind === 'candle') {
-    if (LWC.CandlestickSeries) return chart.addSeries(LWC.CandlestickSeries, {
-      upColor: '#26a69a', downColor: '#ef5350',
-      borderUpColor: '#26a69a', borderDownColor: '#ef5350',
-      wickUpColor: '#26a69a', wickDownColor: '#ef5350',
-      borderVisible: false,
-      priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
-    });
-    return chart.addCandlestickSeries({
-      upColor: '#26a69a', downColor: '#ef5350',
-      borderUpColor: '#26a69a', borderDownColor: '#ef5350',
-      wickUpColor: '#26a69a', wickDownColor: '#ef5350',
-      borderVisible: false,
-    });
-  }
-  if (LWC.HistogramSeries) return chart.addSeries(LWC.HistogramSeries, { priceFormat: { type: 'volume' }, priceScaleId: '' });
-  return chart.addHistogramSeries({ priceFormat: { type: 'volume' }, priceScaleId: '' });
+function fmtMcap(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return '–';
+  if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+  if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+  return n.toFixed(2);
 }
 
-/** TradingView Lightweight Charts v5 - the library Axiom uses. Market-cap candles like pump.fun. Live candle grows via update(). */
+function addSeries(LWC: any, chart: any, kind: 'candle' | 'vol') {
+  const priceFormat = {
+    type: 'custom' as const,
+    minMove: 0.01,
+    formatter: (p: number) => fmtMcap(p),
+  };
+  if (kind === 'candle') {
+    const opts = {
+      upColor: '#26a69a',
+      downColor: '#ef5350',
+      borderUpColor: '#26a69a',
+      borderDownColor: '#ef5350',
+      wickUpColor: '#26a69a',
+      wickDownColor: '#ef5350',
+      borderVisible: false,
+      priceFormat,
+    };
+    if (LWC.CandlestickSeries) return chart.addSeries(LWC.CandlestickSeries, opts);
+    return chart.addCandlestickSeries(opts);
+  }
+  const vopts = {
+    priceFormat: { type: 'volume' as const },
+    priceScaleId: '',
+  };
+  if (LWC.HistogramSeries) return chart.addSeries(LWC.HistogramSeries, vopts);
+  return chart.addHistogramSeries(vopts);
+}
+
+/** TradingView Lightweight Charts. Market-cap candles that tick on every trade. */
 export default function TvChart({ bars = [], trades, solUsd, height = 480 }: { mint: string; bars?: Bar[]; trades: Tr[]; solUsd: number | null; height?: number }) {
   const box = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);
@@ -100,9 +116,11 @@ export default function TvChart({ bars = [], trades, solUsd, height = 480 }: { m
   const volRef = useRef<any>(null);
   const painted = useRef('');
   const follow = useRef(true);
+  const lastTradeKey = useRef('');
   const [tf, setTf] = useState(5);
   const [err, setErr] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
+  const [hover, setHover] = useState<Candle | null>(null);
   const k = solUsd && solUsd > 0 ? solUsd : 1;
 
   useEffect(() => {
@@ -112,24 +130,67 @@ export default function TvChart({ bars = [], trades, solUsd, height = 480 }: { m
       const chart = LWC.createChart(box.current, {
         width: box.current.clientWidth,
         height,
-        layout: { background: { type: 'solid', color: '#131722' }, textColor: '#d1d4dc' },
-        grid: { vertLines: { color: '#1e222d' }, horzLines: { color: '#1e222d' } },
-        crosshair: { mode: 1 },
-        rightPriceScale: { borderColor: '#2a2e39' },
-        timeScale: { borderColor: '#2a2e39', timeVisible: true, secondsVisible: true, rightOffset: 6, barSpacing: 8 },
+        layout: {
+          background: { type: 'solid', color: '#0e1621' },
+          textColor: '#d1d4dc',
+          fontSize: 11,
+          fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        },
+        grid: {
+          vertLines: { color: '#1c2331', style: 0 },
+          horzLines: { color: '#1c2331', style: 0 },
+        },
+        crosshair: {
+          mode: 1,
+          vertLine: { color: '#758696', width: 1, style: 3, labelBackgroundColor: '#2a2e39' },
+          horzLine: { color: '#758696', width: 1, style: 3, labelBackgroundColor: '#2a2e39' },
+        },
+        rightPriceScale: {
+          borderColor: '#2a2e39',
+          scaleMargins: { top: 0.08, bottom: 0.22 },
+        },
+        timeScale: {
+          borderColor: '#2a2e39',
+          timeVisible: true,
+          secondsVisible: true,
+          rightOffset: 8,
+          barSpacing: 6,
+          minBarSpacing: 2,
+        },
         handleScroll: true,
         handleScale: true,
       });
       const candle = addSeries(LWC, chart, 'candle');
       const vol = addSeries(LWC, chart, 'vol');
       vol.priceScale().applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+
+      chart.subscribeCrosshairMove((param: any) => {
+        if (!param || !param.time || !candleRef.current) { setHover(null); return; }
+        const data = param.seriesData?.get?.(candleRef.current);
+        if (data && typeof data.open === 'number') {
+          setHover({
+            time: param.time as number,
+            open: data.open,
+            high: data.high,
+            low: data.low,
+            close: data.close,
+            volume: 0,
+          });
+        } else setHover(null);
+      });
+
       chart.timeScale().subscribeVisibleLogicalRangeChange((range: any) => {
         if (!range) return;
         const barsInfo = candle.barsInLogicalRange?.(range);
-        follow.current = !barsInfo || (typeof barsInfo.barsAfter === 'number' && barsInfo.barsAfter < 2);
+        follow.current = !barsInfo || (typeof barsInfo.barsAfter === 'number' && barsInfo.barsAfter < 3);
       });
-      chartRef.current = chart; candleRef.current = candle; volRef.current = vol;
-      const ro = new ResizeObserver(() => { if (box.current && chartRef.current) chartRef.current.applyOptions({ width: box.current.clientWidth }); });
+
+      chartRef.current = chart;
+      candleRef.current = candle;
+      volRef.current = vol;
+      const ro = new ResizeObserver(() => {
+        if (box.current && chartRef.current) chartRef.current.applyOptions({ width: box.current.clientWidth });
+      });
       ro.observe(box.current);
       (chart as any)._ro = ro;
       setReady(true);
@@ -143,37 +204,70 @@ export default function TvChart({ bars = [], trades, solUsd, height = 480 }: { m
   }, [height]);
 
   useEffect(() => {
-    const candle = candleRef.current; const vol = volRef.current; const chart = chartRef.current;
+    const candle = candleRef.current;
+    const vol = volRef.current;
+    const chart = chartRef.current;
     if (!candle || !vol || !chart) return;
     const candles = buildCandles(trades, bars, tf, k);
     if (!candles.length) return;
     const last = candles[candles.length - 1];
-    const key = `${tf}:${candles.length}:${last.time}`;
+    const key = `${tf}:${candles.length}:${last.time}:${last.close.toFixed(2)}`;
     const sameTf = painted.current.startsWith(`${tf}:`);
+
+    const volColor = (c: Candle) => c.close >= c.open ? 'rgba(38,166,154,0.55)' : 'rgba(239,83,80,0.55)';
+
     if (!sameTf || !painted.current) {
       candle.setData(candles.map((c) => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close })));
-      vol.setData(candles.map((c) => ({ time: c.time, value: c.volume, color: c.close >= c.open ? 'rgba(38,166,154,0.5)' : 'rgba(239,83,80,0.5)' })));
+      vol.setData(candles.map((c) => ({ time: c.time, value: c.volume, color: volColor(c) })));
       chart.timeScale().fitContent();
       chart.timeScale().scrollToRealTime?.();
       painted.current = key;
       return;
     }
+
+    // Live tick: update the current candle on every new trade
     candle.update({ time: last.time, open: last.open, high: last.high, low: last.low, close: last.close });
-    vol.update({ time: last.time, value: last.volume, color: last.close >= last.open ? 'rgba(38,166,154,0.5)' : 'rgba(239,83,80,0.5)' });
+    vol.update({ time: last.time, value: last.volume, color: volColor(last) });
     if (follow.current) chart.timeScale().scrollToRealTime?.();
     painted.current = key;
   }, [bars, trades, tf, k, ready]);
 
+  const candles = buildCandles(trades, bars, tf, k);
+  const live = candles.length ? candles[candles.length - 1] : null;
+  const shown = hover || live;
+  const up = shown ? shown.close >= shown.open : true;
+  const change = shown && shown.open ? ((shown.close - shown.open) / shown.open) * 100 : 0;
+  const vol = live ? live.volume : 0;
+
   return (
     <div className="tvwidget" aria-label="TradingView chart">
       <div className="tvhead">
-        <b>TradingView</b>
-        <span>{solUsd ? 'Market cap - USD' : 'Market cap - SOL'}</span>
+        <b>Market Cap</b>
+        <span>{solUsd ? 'USD' : 'SOL'}</span>
+        {shown && (
+          <span className="ohlc" style={{ color: up ? '#26a69a' : '#ef5350' }}>
+            O {fmtMcap(shown.open)} &nbsp; H {fmtMcap(shown.high)} &nbsp; L {fmtMcap(shown.low)} &nbsp; C {fmtMcap(shown.close)}
+            <span style={{ marginLeft: 8, opacity: 0.85 }}>
+              {change >= 0 ? '+' : ''}{change.toFixed(2)}%
+            </span>
+          </span>
+        )}
         <span className="grow" />
-        <div className="tfs" role="tablist">{TF.map((t) => <button key={t.s} role="tab" aria-selected={tf === t.s} className={tf === t.s ? 'on' : ''} onClick={() => setTf(t.s)}>{t.l}</button>)}</div>
+        <span className="volabel">Vol {vol.toFixed(2)} SOL</span>
+        <div className="tfs" role="tablist">
+          {TF.map((t) => (
+            <button key={t.s} role="tab" aria-selected={tf === t.s} className={tf === t.s ? 'on' : ''} onClick={() => setTf(t.s)}>
+              {t.l}
+            </button>
+          ))}
+        </div>
       </div>
-      <div ref={box} style={{ height }} />
-      {!trades.length && !bars.length && <div className="hint" style={{ padding: '0 10px 8px' }}>{err || 'Loading every trade from the first swap. The live candle grows as new trades land.'}</div>}
+      <div ref={box} style={{ height, position: 'relative' }} />
+      {!trades.length && !bars.length && (
+        <div className="hint" style={{ padding: '0 10px 8px' }}>
+          {err || 'Loading every trade from the first swap. The live candle grows as new trades land.'}
+        </div>
+      )}
     </div>
   );
 }
