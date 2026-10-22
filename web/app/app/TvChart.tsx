@@ -96,6 +96,10 @@ function addSeries(LWC: any, chart: any, kind: 'candle' | 'vol') {
       wickDownColor: '#ef5350',
       borderVisible: false,
       priceFormat,
+      lastValueVisible: true,
+      priceLineVisible: true,
+      priceLineStyle: 2,
+      priceLineWidth: 1,
     };
     if (LWC.CandlestickSeries) return chart.addSeries(LWC.CandlestickSeries, opts);
     return chart.addCandlestickSeries(opts);
@@ -132,13 +136,13 @@ export default function TvChart({ bars = [], trades, solUsd, height = 480 }: { m
         height,
         layout: {
           background: { type: 'solid', color: '#0e1621' },
-          textColor: '#d1d4dc',
+          textColor: '#b2b5be',
           fontSize: 11,
-          fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+          fontFamily: '-apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, sans-serif',
         },
         grid: {
-          vertLines: { color: '#1c2331', style: 0 },
-          horzLines: { color: '#1c2331', style: 0 },
+          vertLines: { color: '#1c2331' },
+          horzLines: { color: '#1c2331' },
         },
         crosshair: {
           mode: 1,
@@ -147,22 +151,25 @@ export default function TvChart({ bars = [], trades, solUsd, height = 480 }: { m
         },
         rightPriceScale: {
           borderColor: '#2a2e39',
-          scaleMargins: { top: 0.08, bottom: 0.22 },
+          scaleMargins: { top: 0.06, bottom: 0.24 },
+          entireTextOnly: false,
         },
         timeScale: {
           borderColor: '#2a2e39',
           timeVisible: true,
           secondsVisible: true,
-          rightOffset: 8,
-          barSpacing: 6,
-          minBarSpacing: 2,
+          rightOffset: 6,
+          barSpacing: 7,
+          minBarSpacing: 3,
         },
         handleScroll: true,
         handleScale: true,
       });
       const candle = addSeries(LWC, chart, 'candle');
       const vol = addSeries(LWC, chart, 'vol');
+      // Volume sits in the bottom ~18% like DexScreener
       vol.priceScale().applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+      candle.priceScale().applyOptions({ scaleMargins: { top: 0.06, bottom: 0.22 } });
 
       chart.subscribeCrosshairMove((param: any) => {
         if (!param || !param.time || !candleRef.current) { setHover(null); return; }
@@ -239,21 +246,21 @@ export default function TvChart({ bars = [], trades, solUsd, height = 480 }: { m
   const change = shown && shown.open ? ((shown.close - shown.open) / shown.open) * 100 : 0;
   const vol = live ? live.volume : 0;
 
+  const title = solUsd ? 'Market Cap · USD' : 'Market Cap · SOL';
+  const chgAbs = shown ? Math.abs(shown.close - shown.open) : 0;
+
   return (
     <div className="tvwidget" aria-label="TradingView chart">
       <div className="tvhead">
-        <b>Market Cap</b>
-        <span>{solUsd ? 'USD' : 'SOL'}</span>
-        {shown && (
-          <span className="ohlc" style={{ color: up ? '#26a69a' : '#ef5350' }}>
-            O {fmtMcap(shown.open)} &nbsp; H {fmtMcap(shown.high)} &nbsp; L {fmtMcap(shown.low)} &nbsp; C {fmtMcap(shown.close)}
-            <span style={{ marginLeft: 8, opacity: 0.85 }}>
-              {change >= 0 ? '+' : ''}{change.toFixed(2)}%
+        <div className="tvtitle">
+          <b>{title}</b>
+          {shown && (
+            <span className="ohlc" style={{ color: up ? '#26a69a' : '#ef5350' }}>
+              O{fmtMcap(shown.open)} H{fmtMcap(shown.high)} L{fmtMcap(shown.low)} C{fmtMcap(shown.close)} {fmtMcap(chgAbs)} ({change >= 0 ? '+' : ''}{change.toFixed(2)}%)
             </span>
-          </span>
-        )}
-        <span className="grow" />
-        <span className="volabel">Vol {vol.toFixed(2)} SOL</span>
+          )}
+          <span className="volabel">Volume {vol >= 1000 ? (vol / 1000).toFixed(2) + 'K' : vol.toFixed(1)} SOL</span>
+        </div>
         <div className="tfs" role="tablist">
           {TF.map((t) => (
             <button key={t.s} role="tab" aria-selected={tf === t.s} className={tf === t.s ? 'on' : ''} onClick={() => setTf(t.s)}>
