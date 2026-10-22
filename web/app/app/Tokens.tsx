@@ -409,7 +409,7 @@ function TokenSheet({ mint, seed, solUsd, me, onSaved, goRobot, onClose }: { min
     const srv: Tr[] = (ch?.trades || []).map((x: any[]) => ({ t: Number(x[0]), side: x[1] === 's' ? 'sell' : 'buy', sol: Number(x[2]) || 0, mcapSol: Number(x[3]) || 0, who: x[4] || undefined, sig: x[5] || undefined }));
     const loc: Tr[] = getLocalTrades(mint).map((x) => ({ t: x.t, side: x.side, sol: x.sol, mcapSol: x.mcapSol, who: x.who, sig: x.sig }));
     const seen = new Set<string>(); const out: Tr[] = [];
-    for (const x of [...loc, ...srv, ...older].sort((a, b) => b.t - a.t)) { const k = x.sig ? x.sig : `${Math.round(x.t / 1000)}:${x.sol}:${x.side}`; if (seen.has(k)) continue; seen.add(k); out.push(x); if (out.length >= 8000) break; // keep enough history to chart several hours back }
+    for (const x of [...loc, ...srv, ...older].sort((a, b) => b.t - a.t)) { const k = x.sig ? x.sig : `${Math.round(x.t / 1000)}:${x.sol}:${x.side}`; if (seen.has(k)) continue; seen.add(k); out.push(x); if (out.length >= 8000) break; } // keep enough history to chart several hours back
     return out;
   }, [mint, ch, n, older]); // eslint-disable-line react-hooks/exhaustive-deps
   const recent = trades.slice(0, 120); const bs = recent.filter((x) => x.side === 'buy').reduce((a, x) => a + x.sol, 0), ss = recent.filter((x) => x.side === 'sell').reduce((a, x) => a + x.sol, 0);
